@@ -49,6 +49,16 @@ OF3_FT_CKPT = OF3_CACHE / "of3p2-ft-ev2a.ckpt"
 OF3_FT_URL = ("https://openfold3-data.s3.amazonaws.com/openfold3-parameters/"
               "openbind/of3p2-ft-ev2a.ckpt")
 PRED_ROOT = SHARED / "predictions"
+OLD_SHARED = "/mnt/user_storage/aiddd"   # the data root before the move to shared storage
+
+
+def relocate_paths(df: pd.DataFrame) -> pd.DataFrame:
+    """Results scored before the data moved to shared storage store structure paths
+    (*_cif, ref_pdb) under OLD_SHARED. Point them at SHARED."""
+    for c in df.columns:
+        if (c.endswith("_cif") or c == "ref_pdb") and df[c].dtype == object:
+            df[c] = df[c].str.replace(OLD_SHARED, str(SHARED), regex=False)
+    return df
 
 
 @dataclass(frozen=True)

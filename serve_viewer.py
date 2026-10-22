@@ -11,9 +11,11 @@ ligand (orange). Uses 3Dmol.js from a CDN in the browser.
 Live prediction: paste a SMILES at the top. Two model deployments run in parallel,
 each on half an L4, so one of each shares a GPU:
   FineTunedLive  pose, from OpenFold3 fine-tuned on the EV-A71 2A fragment screen
-  Boltz2Live     binding affinity (OpenFold3 does not predict affinity)
-Both reuse the pipeline's predictor classes. Repeat SMILES come back from the caches
-under predictions/live/ and predictions/live_of3ft/.
+  Boltz2Live     binding affinity (OpenFold3 does not predict affinity), and its own pose
+The Viewer's user_config "pose_from" picks which deployment's pose the page shows. If the
+molecule has a crystal structure, the page also draws the crystal ligand and reports the
+live pose's RMSD to it. Both models reuse the pipeline's predictor classes. Repeat SMILES
+come back from the caches under predictions/live/ and predictions/live_of3ft/.
 
 pip install "ray[serve]" fastapi
 """
@@ -30,7 +32,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from ray import serve
 from ray.serve.handle import DeploymentHandle
 
-from aiddd_pipeline import pose_in_crystal_frame
+from aiddd_pipeline import pose_in_crystal_frame, relocate_paths, score_pose
 
 SHARED = Path(os.environ.get("AIDDD_SHARED", "/mnt/shared_storage/aiddd"))
 RESULTS = Path(os.environ.get("AIDDD_RESULTS", SHARED / "results" / "ev71-2a"))
@@ -78,8 +80,10 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
   Fragments typically bind at 3 to 5; optimized compounds reach 7 or more. Blank means not measured.</dd>
  <dt>Colours in the 3D view</dt><dd><b style="color:#2e9e4f">Green</b>: the model's predicted pose.
   <b style="color:#f28c28">Orange</b>: the crystal pose. Grey ribbon: the predicted protein. Good predictions overlap.</dd>
- <dt>Live prediction</dt><dd>The <b>pose</b> comes from OF3 fine-tuned, the most accurate model on this protein's
-  follow-on compounds. The <b>affinity</b> comes from Boltz-2, because OpenFold3 does not predict affinity.
+ <dt>Live prediction</dt><dd>The <b>pose</b> comes from the model named in the result line: Boltz-2, or OF3
+  fine-tuned on this protein's fragment screen. The <b>affinity</b> comes from Boltz-2, because OpenFold3 does not
+  predict affinity. If the molecule has a crystal structure, the crystal ligand is drawn in orange and the result
+  line gives the ligand RMSD.
   <b>Ligand ipTM</b> (0 to 1) is the pose model's confidence in the protein-ligand interface; as a
   rough guide, above 0.8 is confident and below 0.5 is unreliable. <b>Affinity</b> is Boltz-2's predicted
   log<sub>10</sub>(IC<sub>50</sub> in µM), so <b>lower means tighter binding</b>: 2 ≈ 100 µM (weak), 0 = 1 µM,
@@ -124,18 +128,27 @@ async function predict(ev){
   if(!r.ok || j.status === "failed" || j.status === "skipped"){ st.textContent = "failed: " + (j.error || r.status); return; }
   const m = j.metrics, f = v => (typeof v === "number" ? v.toFixed(2) : "n/a");
   const aff = m.affinity_pred_value, ic50 = typeof aff === "number" ? Math.pow(10, aff) : null;
-  const iptm = j.pose_iptm;
+  const iptm = j.pose_iptm, key = j.answer_key;
   const conf = iptm >= 0.8 ? "confident" : (iptm >= 0.5 ? "moderately confident" : "not confident");
   document.getElementById("lread").innerHTML = (ic50 === null ? "" :
     `Predicted IC<sub>50</sub> ≈ <b>${ic50 >= 1 ? ic50.toFixed(ic50 >= 10 ? 0 : 1) + " µM" : (ic50 * 1000).toFixed(0) + " nM"}</b>
      (pIC<sub>50</sub> ${(6 - aff).toFixed(1)}; ${aff > 1 ? "weak" : (aff > -1 ? "moderate" : "potent")} binding). `) +
     `${j.pose_model} is ${conf} about this pose. Boltz-2 estimates a ${Math.round(100 * m.affinity_probability_binary)}% chance that the molecule binds. ` +
-    `No crystal structure exists for a new molecule, so there is no RMSD to check.`;
-  st.innerHTML = `pose: ${j.pose_model}, ipTM <b>${f(iptm)}</b> &middot; affinity <b>${f(m.affinity_pred_value)}</b> (log10 IC50, &micro;M) &middot; P(binder) <b>${f(m.affinity_probability_binary)}</b> &middot; ${j.seconds.toFixed(0)} s`;
-  document.getElementById("cur").textContent = "live: " + smi;
-  viewer.clear(); viewer.addModel(j.cif, "cif");
+    (!key ? `No crystal structure exists for this molecule, so there is no RMSD to check.` :
+     key.lig_rmsd === null ? `Crystal ${key.complex} exists, but this pose could not be scored against it.` :
+     `This molecule has a crystal structure (${key.complex}, orange): the predicted ligand is <b>${key.lig_rmsd.toFixed(1)} &Aring;</b>
+      from it, ${key.lig_rmsd < 2 ? "a correct pose" : "a wrong pose"} (correct is under 2 &Aring;).`);
+  st.innerHTML = `pose: ${j.pose_model} (${j.models.pose.version}), ipTM <b>${f(iptm)}</b>` +
+    (key && key.lig_rmsd !== null ? ` &middot; RMSD <b>${f(key.lig_rmsd)}</b> &Aring;` : "") +
+    ` &middot; affinity <b>${f(m.affinity_pred_value)}</b> (log10 IC50, &micro;M) &middot; P(binder) <b>${f(m.affinity_probability_binary)}</b> &middot; ${j.seconds.toFixed(0)} s`;
+  document.getElementById("cur").textContent = `live (${j.pose_model}): ${smi}`;
+  viewer.clear(); viewer.addModel(j.cif, j.format || "cif");
   viewer.setStyle({model:0},{cartoon:{color:"#cfd8dc",opacity:0.6}});
   viewer.setStyle({model:0,chain:"B"},{stick:{color:"#2e9e4f",radius:0.25}});
+  if (key){ const g = await fetch(u("/structure/gt/"+key.complex));
+    if (g.ok){ viewer.addModel(await g.text(), "pdb");
+      viewer.setStyle({model:1},{});
+      viewer.setStyle({model:1,resn:"LIG"},{stick:{color:"#f28c28",radius:0.25}}); } }
   viewer.zoomTo({chain:"B"}); viewer.render();
 }
 const first = document.querySelector("tr[data-cid]"); if(first) show(first.dataset.cid);
@@ -152,8 +165,16 @@ def predict_one(pred, smiles: str) -> dict:
     out = {"ligand_id": lig_id, "status": r[f"{k}_status"], "error": r[f"{k}_error"],
            "metrics": json.loads(r[f"{k}_metrics"]), "seconds": float(r[f"{k}_batch_seconds"])}
     if r[f"{k}_cif"]:
-        out["cif"] = Path(r[f"{k}_cif"]).read_text()
+        out["cif"], out["cif_path"] = Path(r[f"{k}_cif"]).read_text(), r[f"{k}_cif"]
     return out
+
+
+def canonical(smiles: str):
+    """RDKit canonical SMILES, so one molecule written two ways still finds its crystal."""
+    from rdkit import Chem, RDLogger
+    RDLogger.DisableLog("rdApp.*")
+    mol = Chem.MolFromSmiles(smiles)
+    return Chem.MolToSmiles(mol) if mol is not None else None
 
 
 def live_cache(pred, version: str) -> Path:
@@ -164,10 +185,11 @@ def live_cache(pred, version: str) -> Path:
     return out
 
 
-# Hot swap: both model deployments take {"version", "checkpoint"} as user_config. A Serve
-# config (or `anyscale service deploy --in-place`) that changes only user_config calls
-# reconfigure() on the running replicas, with no restart. Each call runs the model as a
-# fresh subprocess, so the next request already uses the new checkpoint.
+# Hot swap: both model deployments take {"version", "checkpoint", "name" (optional label)}
+# as user_config, and the Viewer takes {"pose_from"}. A Serve config (or `anyscale service
+# deploy --in-place`) that changes only user_config calls reconfigure() on the running
+# replicas, with no restart. Each call runs the model as a fresh subprocess, so the next
+# request already uses the new checkpoint.
 #
 # Half an L4 per replica: one Boltz2Live and one FineTunedLive share each GPU (about 5 and
 # 3 GB of its 24 GB). Two replicas of each fit the two L4s the Service is given.
@@ -192,7 +214,7 @@ class Boltz2Live:
         ckpt = cfg.get("checkpoint")
         self.pred.extra_args = ["--checkpoint", ckpt] if ckpt else []
         self.pred.out = live_cache(self.pred, cfg["version"])
-        self.model = {"name": MODELS["boltz2"], "version": cfg["version"], "checkpoint": ckpt}
+        self.model = {"name": cfg.get("name", MODELS["boltz2"]), "version": cfg["version"], "checkpoint": ckpt}
 
     def __call__(self, smiles: str) -> dict:
         return {**predict_one(self.pred, smiles), "model": self.model}
@@ -219,13 +241,15 @@ class FineTunedLive:
         self.pred.ckpt_path = ckpt or str(OF3_FT_CKPT)
         self.pred.binary = "run_openfold" if ckpt else "/opt/of3-legacy/bin/run_openfold"
         self.pred.out = live_cache(self.pred, cfg["version"])
-        self.model = {"name": MODELS["of3ft"], "version": cfg["version"], "checkpoint": self.pred.ckpt_path}
+        self.model = {"name": cfg.get("name", MODELS["of3ft"]), "version": cfg["version"],
+                      "checkpoint": self.pred.ckpt_path}
 
     def __call__(self, smiles: str) -> dict:
         return {**predict_one(self.pred, smiles), "model": self.model}
 
 
-@serve.deployment(num_replicas=1, ray_actor_options={"num_cpus": 1})
+@serve.deployment(num_replicas=1, ray_actor_options={"num_cpus": 1},
+                  user_config={"pose_from": "FineTunedLive"})
 @serve.ingress(api)
 class Viewer:
     def __init__(self, live: DeploymentHandle, pose: DeploymentHandle = None):
@@ -233,8 +257,30 @@ class Viewer:
         self.pose = pose   # fine-tuned OpenFold3: pose (None: use Boltz-2's pose)
         # File by file: a column that is all null in one file and numeric in another
         # will not merge as one Parquet dataset.
-        self.df = pd.concat([pd.read_parquet(f) for f in sorted(RESULTS.glob("*.parquet"))], ignore_index=True)
+        self.df = relocate_paths(pd.concat([pd.read_parquet(f) for f in sorted(RESULTS.glob("*.parquet"))],
+                                           ignore_index=True))
         self.models = [k for k in MODELS if f"{k}_lig_rmsd" in self.df]
+        # Canonical SMILES -> first crystal of that compound: the answer key for live predictions
+        self.known = {}
+        for r in self.df.dropna(subset=["smiles"]).sort_values("complex_name").itertuples():
+            if (c := canonical(r.smiles)) is not None:
+                self.known.setdefault(c, r)
+
+    def reconfigure(self, cfg: dict):
+        """pose_from: "FineTunedLive" or "Boltz2Live", the deployment whose pose /predict returns."""
+        self.pose_from = cfg["pose_from"]
+
+    def answer_key(self, row, cif_path: str) -> dict:
+        """For a molecule with a crystal structure: the live pose's ligand RMSD to that crystal,
+        and the pose moved onto it, so the page can draw the two ligands together."""
+        ref_pdb = Path(row.ref_pdb)
+        ref_sdf = ref_pdb.with_name(ref_pdb.name.replace("_complex_ref.pdb", "_ligand_ref.sdf"))
+        try:
+            rmsd, _ = score_pose(cif_path, ref_pdb, ref_sdf, {})
+            return {"answer_key": {"complex": row.complex_name, "lig_rmsd": float(rmsd)},
+                    "cif": pose_in_crystal_frame(cif_path, ref_pdb), "format": "pdb"}
+        except Exception as e:
+            return {"answer_key": {"complex": row.complex_name, "lig_rmsd": None, "error": str(e)}}
 
     @api.get("/", response_class=HTMLResponse)
     def index(self, model: str = ""):
@@ -263,17 +309,19 @@ class Viewer:
         if not smiles or len(smiles) > 300:
             return JSONResponse({"status": "failed", "error": "need a SMILES under 300 chars"}, 400)
         # Both models run at the same time, each on its own replica
-        if self.pose is None:
+        if self.pose is None or self.pose_from == "Boltz2Live":
             aff = await self.live.remote(smiles)
-            pose, pose_model = aff, MODELS["boltz2"]
+            pose = aff
         else:
             aff, pose = await asyncio.gather(self.live.remote(smiles), self.pose.remote(smiles))
-            pose_model = MODELS["of3ft"]
         iptm = pose["metrics"].get("ligand_iptm", pose["metrics"].get("iptm"))
-        out = {**pose, "pose_model": pose_model, "pose_iptm": iptm,
+        out = {**pose, "pose_model": pose["model"]["name"], "pose_iptm": iptm,
                "metrics": aff["metrics"], "affinity_status": aff["status"],
                "seconds": max(pose["seconds"], aff["seconds"]),
                "models": {"pose": pose["model"], "affinity": aff["model"]}}
+        c = canonical(smiles)
+        if (row := self.known.get(c) if c else None) is not None and pose.get("cif_path"):
+            out.update(self.answer_key(row, pose["cif_path"]))
         return JSONResponse(out, 200 if out["status"] in ("ok", "cached") else 422)
 
     @api.get("/structure/pred/{key}/{cid}", response_class=PlainTextResponse)
