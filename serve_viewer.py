@@ -32,7 +32,7 @@ from ray.serve.handle import DeploymentHandle
 
 from aiddd_pipeline import pose_in_crystal_frame
 
-SHARED = Path(os.environ.get("AIDDD_SHARED", "/mnt/user_storage/aiddd"))
+SHARED = Path(os.environ.get("AIDDD_SHARED", "/mnt/shared_storage/aiddd"))
 RESULTS = Path(os.environ.get("AIDDD_RESULTS", SHARED / "results" / "ev71-2a"))
 STRUCTURES = SHARED / "raw" / "OpenBind_EV-A71_2A" / "structures"
 MODELS = {"boltz2": "Boltz-2", "openbind0": "OpenBind-0", "of3ft": "OF3 fine-tuned",
@@ -156,11 +156,25 @@ def predict_one(pred, smiles: str) -> dict:
     return out
 
 
+def live_cache(pred, version: str) -> Path:
+    """One cache folder per model version, so a swapped-in model never returns the old model's
+    cached poses. "base" keeps the original folder."""
+    out = pred.t.pred_root / (pred.key if version == "base" else f"{pred.key}_{version}")
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+# Hot swap: both model deployments take {"version", "checkpoint"} as user_config. A Serve
+# config (or `anyscale service deploy --in-place`) that changes only user_config calls
+# reconfigure() on the running replicas, with no restart. Each call runs the model as a
+# fresh subprocess, so the next request already uses the new checkpoint.
+#
 # Half an L4 per replica: one Boltz2Live and one FineTunedLive share each GPU (about 5 and
 # 3 GB of its 24 GB). Two replicas of each fit the two L4s the Service is given.
 @serve.deployment(ray_actor_options={"num_gpus": 0.5, "accelerator_type": "L4"},
                   autoscaling_config={"min_replicas": 1, "max_replicas": 2,
-                                      "target_ongoing_requests": 1})
+                                      "target_ongoing_requests": 1},
+                  user_config={"version": "base", "checkpoint": None})
 class Boltz2Live:
     """Boltz-2 affinity (and its own pose). Same predictor class as the batch pipeline."""
 
@@ -172,13 +186,22 @@ class Boltz2Live:
 
         self.pred = LivePredictor()
 
+    def reconfigure(self, cfg: dict):
+        """checkpoint: a Boltz-2 structure checkpoint (`boltz predict --checkpoint`); None is
+        the released boltz2_conf.ckpt. Affinity always uses the released affinity checkpoint."""
+        ckpt = cfg.get("checkpoint")
+        self.pred.extra_args = ["--checkpoint", ckpt] if ckpt else []
+        self.pred.out = live_cache(self.pred, cfg["version"])
+        self.model = {"name": MODELS["boltz2"], "version": cfg["version"], "checkpoint": ckpt}
+
     def __call__(self, smiles: str) -> dict:
-        return predict_one(self.pred, smiles)
+        return {**predict_one(self.pred, smiles), "model": self.model}
 
 
 @serve.deployment(ray_actor_options={"num_gpus": 0.5, "accelerator_type": "L4"},
                   autoscaling_config={"min_replicas": 1, "max_replicas": 2,
-                                      "target_ongoing_requests": 1})
+                                      "target_ongoing_requests": 1},
+                  user_config={"version": "base", "checkpoint": None})
 class FineTunedLive:
     """Pose from OpenFold3 fine-tuned on the EV-A71 2A fragment screen (the of3ft checkpoint)."""
 
@@ -188,8 +211,18 @@ class FineTunedLive:
                                  binary="/opt/of3-legacy/bin/run_openfold", target="ev71-2a",
                                  out_dir=str(TARGETS["ev71-2a"].pred_root / "live_of3ft"))
 
+    def reconfigure(self, cfg: dict):
+        """checkpoint: None is the released of3ft (OF3-p2, legacy openfold3). Anything else is
+        an OpenFold3 state dict such as finetune_ray_train.py's of3_ev71_ft.pt."""
+        from aiddd_pipeline import OF3_FT_CKPT
+        ckpt = cfg.get("checkpoint")
+        self.pred.ckpt_path = ckpt or str(OF3_FT_CKPT)
+        self.pred.binary = "run_openfold" if ckpt else "/opt/of3-legacy/bin/run_openfold"
+        self.pred.out = live_cache(self.pred, cfg["version"])
+        self.model = {"name": MODELS["of3ft"], "version": cfg["version"], "checkpoint": self.pred.ckpt_path}
+
     def __call__(self, smiles: str) -> dict:
-        return predict_one(self.pred, smiles)
+        return {**predict_one(self.pred, smiles), "model": self.model}
 
 
 @serve.deployment(num_replicas=1, ray_actor_options={"num_cpus": 1})
@@ -239,7 +272,8 @@ class Viewer:
         iptm = pose["metrics"].get("ligand_iptm", pose["metrics"].get("iptm"))
         out = {**pose, "pose_model": pose_model, "pose_iptm": iptm,
                "metrics": aff["metrics"], "affinity_status": aff["status"],
-               "seconds": max(pose["seconds"], aff["seconds"])}
+               "seconds": max(pose["seconds"], aff["seconds"]),
+               "models": {"pose": pose["model"], "affinity": aff["model"]}}
         return JSONResponse(out, 200 if out["status"] in ("ok", "cached") else 422)
 
     @api.get("/structure/pred/{key}/{cid}", response_class=PlainTextResponse)

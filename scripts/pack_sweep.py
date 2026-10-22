@@ -21,7 +21,7 @@ import sys
 import time
 from pathlib import Path
 
-SHARED = Path(os.environ.get("AIDDD_SHARED", "/mnt/user_storage/aiddd"))
+SHARED = Path(os.environ.get("AIDDD_SHARED", "/mnt/shared_storage/aiddd"))
 REPO = Path(__file__).resolve().parent.parent
 
 

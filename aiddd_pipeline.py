@@ -37,7 +37,7 @@ import numpy as np
 import pandas as pd
 import ray
 
-SHARED = Path(os.environ.get("AIDDD_SHARED", "/mnt/user_storage/aiddd"))
+SHARED = Path(os.environ.get("AIDDD_SHARED", "/mnt/shared_storage/aiddd"))
 BOLTZ_CACHE = SHARED / "boltz_cache"
 OF3_CACHE = SHARED / "of3_cache"
 OF3_OB_CKPT = OF3_CACHE / "of3-ob-2025-06-30-174k.pt"   # OpenBind-0

@@ -281,7 +281,7 @@ The per-complex results are stored as Parquet:
 
 ```python
 import pandas as pd
-df = pd.read_parquet("/mnt/user_storage/aiddd/results/ev71-2a")
+df = pd.read_parquet("/mnt/shared_storage/aiddd/results/ev71-2a")
 df.groupby("stage")[["boltz2_lig_rmsd", "openbind0_lig_rmsd", "of3ft_lig_rmsd"]].median()
 ```
 
@@ -436,10 +436,10 @@ the study:
 ```bash
 python scripts/setup_data.py                            # 15 to 20 min, once
 python aiddd_pipeline.py --limit 8 --max-gpus 2 \
-  --out /mnt/user_storage/aiddd/results/smoke           # 15 min, checks that everything works
+  --out /mnt/shared_storage/aiddd/results/smoke           # 15 min, checks that everything works
 anyscale job submit -f jobs/job.yaml --name aiddd-ev71 -- \
   python aiddd_pipeline.py --target ev71-2a --models boltz2,openbind0 --max-gpus 8 \
-    --out /mnt/user_storage/aiddd/results/ev71-2a       # 1 to 2 h, full benchmark
+    --out /mnt/shared_storage/aiddd/results/ev71-2a       # 1 to 2 h, full benchmark
 serve run serve_viewer:app                              # viewer and live prediction
 ```
 
@@ -503,10 +503,10 @@ anyscale image build -f image/Containerfile -n aiddd-boltz2-of3 -r 2.59.0
 anyscale job submit -f jobs/job.yaml --name aiddd-setup -- python scripts/setup_data.py
 ```
 
-All data is stored under `/mnt/user_storage/aiddd`, which Workspaces and Jobs can both read:
+All data is stored under `/mnt/shared_storage/aiddd`, which every Workspace, Job and Service in the Anyscale cloud can read, whoever started it:
 
 ```
-/mnt/user_storage/aiddd/
+/mnt/shared_storage/aiddd/
   raw/OpenBind_EV-A71_2A/      structures, metadata CSV, FASTA, MSA        (500 MB)
   EV-A71_2A_benchmark/         published OpenBind results                  (11 MB)
   boltz_cache/                 Boltz-2 weights and chemical component data (6 GB)
@@ -536,13 +536,13 @@ Run 8 ligands (2 fragments and 6 follow-ons) through all 3 models:
 ```bash
 anyscale job submit -f jobs/job.yaml --name aiddd-smoke -- \
   python aiddd_pipeline.py --models boltz2,openbind0,of3ft \
-    --limit 8 --max-gpus 2 --out /mnt/user_storage/aiddd/results/smoke
+    --limit 8 --max-gpus 2 --out /mnt/shared_storage/aiddd/results/smoke
 ```
 
 The job log ends with a summary like this:
 
 ```
-Done in N min. 10 complexes scored -> /mnt/user_storage/aiddd/results/smoke
+Done in N min. 10 complexes scored -> /mnt/shared_storage/aiddd/results/smoke
   Boltz-2: {'ok': 8}
   OpenBind-0 (OF3): {'ok': 8}
   OF3 fine-tuned on EV-A71 2A: {'ok': 8}
@@ -556,7 +556,7 @@ Done in N min. 10 complexes scored -> /mnt/user_storage/aiddd/results/smoke
 ```bash
 anyscale job submit -f jobs/job.yaml --name aiddd-ev71 -- \
   python aiddd_pipeline.py --target ev71-2a --models boltz2,openbind0,of3ft --max-gpus 8 \
-    --out /mnt/user_storage/aiddd/results/ev71-2a
+    --out /mnt/shared_storage/aiddd/results/ev71-2a
 anyscale job submit -f jobs/job.yaml --name aiddd-sars2 -- \
   python aiddd_pipeline.py --target sars2-mpro --models boltz2,openbind0,of3ft --max-gpus 8
 anyscale job submit -f jobs/job.yaml --name aiddd-mers -- \
@@ -568,7 +568,7 @@ To score the general OpenFold3 145k model, use `jobs/job.yaml` and always give i
 ```bash
 anyscale job submit -f jobs/job.yaml --name base-of3p2-ev71-2a -- \
   python aiddd_pipeline.py --target ev71-2a --models of3p2 --max-gpus 12 --of3-per-gpu 2 \
-    --cpus-per-gpu-node 16 --out /mnt/user_storage/aiddd/results_base-of3p2/ev71-2a
+    --cpus-per-gpu-node 16 --out /mnt/shared_storage/aiddd/results_base-of3p2/ev71-2a
 ```
 
 - Each job runs on its own cluster, so all 3 targets can run at the same time.
@@ -584,7 +584,7 @@ anyscale job submit -f jobs/job.yaml --name base-of3p2-ev71-2a -- \
 
 ```bash
 python scripts/check_serve.py                                      # end-to-end check
-AIDDD_RESULTS=/mnt/user_storage/aiddd/results/ev71-2a serve run serve_viewer:app
+AIDDD_RESULTS=/mnt/shared_storage/aiddd/results/ev71-2a serve run serve_viewer:app
 ```
 
 Open the Workspace URL with `?port=8000` added. If your browser reports an invalid referer, paste the URL
@@ -609,7 +609,7 @@ anyscale service terminate -n aiddd-viewer       # after the session
 ```bash
 python scripts/prepare_finetune.py --check                                   # 66 curated fragments
 python scripts/prepare_finetune.py --paper-set \
-  --out /mnt/user_storage/aiddd/finetune/ev71-2a-frag80                      # the OpenBind paper's 80
+  --out /mnt/shared_storage/aiddd/finetune/ev71-2a-frag80                      # the OpenBind paper's 80
 ```
 
 - The default set keeps fragment complexes with a PoseBusters-valid reference, no suspected artefact and no
@@ -702,7 +702,7 @@ anyscale job submit -f jobs/job.yaml --name tune-boltz -- python scripts/tune_bo
 
 | Variable | Default | Used by |
 |---|---|---|
-| `AIDDD_SHARED` | `/mnt/user_storage/aiddd` | All scripts: data, weights, predictions and results |
+| `AIDDD_SHARED` | `/mnt/shared_storage/aiddd` | All scripts: data, weights, predictions and results |
 | `AIDDD_RESULTS` | `$AIDDD_SHARED/results/ev71-2a` | `serve_viewer.py` |
 | `AIDDD_OURS_RUN` | newest benchmarked `ft-p2-*` run | `workshop_helpers.py`: which fine-tune the notebook shows as "ours" |
 
@@ -712,7 +712,7 @@ anyscale job submit -f jobs/job.yaml --name tune-boltz -- python scripts/tune_bo
 
 | Symptom | Cause and fix |
 |---|---|
-| `Missing /mnt/user_storage/aiddd/...` | Data is not downloaded. Run Step 2 or Step 2b |
+| `Missing /mnt/shared_storage/aiddd/...` | Data is not downloaded. Run Step 2 or Step 2b |
 | Job stays at `pending=1` actors for several minutes | GPU nodes are starting. The first node usually takes 3 to 6 minutes |
 | `InsufficientInstanceCapacity` | The cloud has no free GPUs of that type. `enable_cross_zone_scaling` tries other zones. If all fail, remove `--of3-accelerator L40S` so every stage uses L4 |
 | Fine-tuning reports that the worker group timed out | Not enough free GPUs. Stop the Serve application from Section 7 (`serve shutdown`) and run the notebook in order |

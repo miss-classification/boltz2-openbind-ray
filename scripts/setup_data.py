@@ -4,7 +4,7 @@ One-time setup: download the dataset, the published benchmark, and model weights
     python scripts/setup_data.py                 # everything (about 15 GB, 10 to 20 min)
     python scripts/setup_data.py --skip-of3      # Boltz-2 only (about 6 GB)
 
-Everything lands under $AIDDD_SHARED (default /mnt/user_storage/aiddd), which
+Everything lands under $AIDDD_SHARED (default /mnt/shared_storage/aiddd), which
 every node of a Workspace or Job can read. Each step is skipped if its output
 already exists, so the script is safe to rerun.
 
@@ -23,7 +23,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-SHARED = Path(os.environ.get("AIDDD_SHARED", "/mnt/user_storage/aiddd"))
+SHARED = Path(os.environ.get("AIDDD_SHARED", "/mnt/shared_storage/aiddd"))
 
 RELEASE_URL = "https://zenodo.org/api/records/22142262/files/OpenBind_EV-A71_2A.zip/content"
 BENCHMARK_RAW = ("https://raw.githubusercontent.com/OpenBind-Consortium/EV-A71_2A_benchmark/main/"

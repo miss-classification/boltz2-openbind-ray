@@ -287,9 +287,9 @@ def fault_gif(a):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--only", choices=["pose", "accuracy", "fault"], default=None)
-    ap.add_argument("--before-cif", default="/mnt/user_storage/aiddd/predictions_base-of3p2/1022-2240/of3p2/x7056a.cif")
+    ap.add_argument("--before-cif", default="/mnt/shared_storage/aiddd/predictions_base-of3p2/1022-2240/of3p2/x7056a.cif")
     ap.add_argument("--before-rmsd", type=float, default=6.01)
-    ap.add_argument("--after-cif", default="/mnt/user_storage/aiddd/predictions/of3ft/x7056a.cif",
+    ap.add_argument("--after-cif", default="/mnt/shared_storage/aiddd/predictions/of3ft/x7056a.cif",
                     help="the fine-tuned pose of x7056a (default: the OpenBind team's released fine-tune)")
     ap.add_argument("--after-rmsd", type=float, default=0.40)
     ap.add_argument("--after-label", default="Fine-tuned")
