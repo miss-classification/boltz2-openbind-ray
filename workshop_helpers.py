@@ -1,5 +1,5 @@
 """
-Display helpers for workshop.ipynb: an inline 3D viewer and result tables.
+Display helpers for the workshop notebooks: an inline 3D viewer and result tables.
 
 The Ray code lives in the notebook itself. This module only draws things, so the
 notebook cells stay about Ray and the science.

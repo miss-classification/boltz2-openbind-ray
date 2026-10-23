@@ -15,8 +15,9 @@ structures, and runs the full workflow on Ray.
 - **Workflow on Ray:** distributed inference, pose scoring, fine-tuning, hyperparameter search and a live
   prediction service [[13]](#ref-13).
 
-The repository accompanies a hands-on workshop at the AI Drug Discovery & Development Summit 2026
-(`workshop.ipynb`). It can also be run as a standalone benchmark.
+The repository accompanies a hands-on workshop at the AI Drug Discovery & Development Summit 2026, in 3
+notebooks: `01_ray_and_offline_inference.ipynb`, `02_train_and_tune.ipynb` and `03_serve.ipynb`. Each one
+stands alone, so you can start at any of the 3. It can also be run as a standalone benchmark.
 
 ![The workflow end to end: question, crystal structure, prediction, scoring and scale-up](docs/images/workshop.gif)
 
@@ -53,9 +54,9 @@ The repository accompanies a hands-on workshop at the AI Drug Discovery & Develo
 - **OpenBind-0 is an in-distribution reference, not a generalization test.** It reaches 91% on EV-A71 2A late
   follow-ons, but it comes from the consortium that produced these structures, and its training cutoff is later
   than almost all of them. On EV-A71 2A fragments it reaches 28%.
-- **Fine-tuning on fragment structures closes much of the gap.** Starting from 145k, the OpenBind team's released
-  fine-tune reaches 78% on EV-A71 2A late follow-ons. Our Ray Train fine-tunes from the same start are in
-  [Fine-tuning from a general model](#fine-tuning-from-a-general-model).
+- **Fine-tuning on fragment structures closes much of the gap.** Starting from 145k and training only on the
+  66 fragment-screen structures, accuracy on held-out late follow-ons rises from 23.9% to 44.8% in 2.4 hours
+  on 8 L4 GPUs. The OpenBind team's released checkpoint, from the same starting weights, reaches 78.1%.
 - **Fine-tuned models are specialists.** The released fine-tune drops to 57% on SARS-CoV-2 late follow-ons.
 - **More inference compute helps little.** Searching Boltz-2 inference settings with Ray Tune raised its EV-A71 2A
   accuracy from 0% to 13.5%, at about 6 times the GPU cost.
@@ -193,7 +194,7 @@ All values use the curated set and 1 sampled pose per ligand.
 | OpenBind-0† | 28.4% | 91.4% | 90.9% | 90.1% |
 | OpenFold3 145k (general) | 8.1% | 23.9% | 87.7% | 73.5% |
 | OpenFold3 145k, fine-tuned by the OpenBind team | 81.1%* | 78.1% | 56.5% | 66.4% |
-| OpenFold3 145k, fine-tuned with Ray Train (ours) | [pending]* | [pending] | [pending] | [pending] |
+| OpenFold3 145k, fine-tuned with Ray Train (ours) | 75.7%* | 44.8% | 62.1% | 68.8% |
 
 <sub>Late follow-on compounds: the last design cycles of each campaign, and the hardest stage for every model.
 Early follow-ons and the combined figure are in the [pose accuracy figure](#results) and in
@@ -222,11 +223,30 @@ on every follow-on compound, none of which appears in training.
 | Late follow-ons, % within 2 Å | SARS-CoV-2 Mpro | MERS-CoV Mpro | EV-A71 2A |
 |---|---|---|---|
 | OpenFold3 145k, before | 87.7% | 73.5% | 23.9% |
-| Fine-tuned with Ray Train, 66 fragments, 8 L4 × 1,000 steps | [pending] | [pending] | [pending] |
-| Fine-tuned with Ray Train, paper recipe: 80 fragments, 32 diffusion samples | [pending] | [pending] | [pending] |
+| Fine-tuned with Ray Train, 66 fragments, 8 samples per step | 62.1% | 68.8% | **44.8%** |
+| Fine-tuned with Ray Train, 80 fragments, 32 samples per step | 65.2% | 71.0% | 40.6% |
 | Fine-tuned by the OpenBind team (released) | 56.5% | 66.4% | 78.1% |
 
 ![Before and after fine-tuning](docs/images/before_after_accuracy.gif)
+
+**Observations**
+
+- 4 times the sampling per step did not help (40.6% against 44.8%), so the remaining distance to the released
+  checkpoint is not training compute per step.
+- Predicting 5 poses per compound instead of 1 lifts the general model from 23.9% to 32.7% on late follow-ons.
+  The fine-tuned model does not gain from the same extra compute (44.8% with 1 pose, 43.8% with 5), so at 5
+  poses each the comparison is 32.7% against 43.8%: fine-tuning beats extra inference compute here. Sampling
+  is one reason published figures exceed ours, since the paper takes the top-ranked of 25 poses.
+- Accuracy tracks chemical distance from the fragment screen, measured as the highest Morgan Tanimoto
+  similarity to any fragment-screen compound. At 5 poses, the fine-tuned model reaches 41.4% on the 133 late
+  follow-ons below 0.3, 43.5% on the 253 between 0.3 and 0.5, and 81.8% on the 11 at 0.5 or above, against
+  30.8%, 33.6% and 36.4% for the general model. The gain is largest on compounds resembling the fragments
+  and still present on the most distant ones.
+- A fine-tuned model is a specialist. On the 2 proteases it was not trained for it gives up accuracy, from
+  87.7% to 62.1% on SARS-CoV-2 and from 73.5% to 68.8% on MERS-CoV.
+- All 4 fine-tuning variants were trained on **spot** GPUs in a single working session. Between them they
+  lost 9 nodes to reclamation and finished every run, because a checkpoint every 100 steps caps the loss at
+  about 13 minutes.
 
 **From a standard OpenFold3 launch to Ray Train.** OpenFold3's own training stack (configuration, data module, losses,
 per-sample gradient clipping, EMA, Lightning loop) runs unchanged inside each Ray Train worker. Only the launcher
@@ -397,33 +417,35 @@ MERS-CoV Mpro. The first 2 rows are earlier layouts on 8 L4 GPUs; the figure bel
 
 ```
 .
-├── workshop.ipynb              Hands-on workshop notebook (90 minutes)
-├── workshop_helpers.py         Plotting, 3D viewer and data loading for the notebook
+├── 01_ray_and_offline_inference.ipynb  Ray Core, then offline batch inference with Ray Data
+├── 02_train_and_tune.ipynb             Fine-tuning with Ray Train, sweeps with Ray Tune
+├── 03_serve.ipynb                      The viewer and live prediction with Ray Serve
+├── workshop_helpers.py                 Plotting, 3D viewer and data loading for the notebooks
 │
-├── aiddd_pipeline.py           Ray Data benchmark pipeline: validate, predict, score
-├── finetune_ray_train.py       Ray Train fine-tuning of OpenFold3 (TorchTrainer, Lightning DDP)
-├── serve_viewer.py             Ray Serve application: results viewer and live prediction
+├── aiddd_pipeline.py                   Ray Data benchmark pipeline: validate, predict, score
+├── finetune_ray_train.py               Ray Train fine-tuning of OpenFold3 (TorchTrainer, Lightning DDP)
+├── serve_viewer.py                     Ray Serve application: results viewer and live prediction
 │
 ├── jobs/
-│   ├── job.yaml                Everyday Anyscale Job: benchmarks, fine-tuning, sweeps
-│   ├── workshop.yaml           The workshop's live run on pinned GPU nodes
-│   └── service.yaml            Anyscale Service for sharing the viewer
+│   ├── job.yaml                        Everyday Anyscale Job: benchmarks, fine-tuning, sweeps
+│   ├── workshop.yaml                   The workshop's live run on pinned GPU nodes
+│   └── service.yaml                    Anyscale Service for sharing the viewer
 ├── configs/
-│   └── finetune_ev71.yml       OpenFold3 training settings used by the fine-tune
+│   └── finetune_ev71.yml               OpenFold3 training settings used by the fine-tune
 ├── scripts/
-│   ├── setup_data.py           One-time download of data, published benchmark and weights
-│   ├── prepare_mpro.py         One-time build of the SARS-CoV-2 and MERS-CoV Mpro targets
-│   ├── prepare_finetune.py     Builds the OpenFold3 training set from a fragment screen
-│   ├── bench_checkpoints.py    Benchmarks every fine-tuned checkpoint on every target
-│   ├── compare_targets.py      Summary table across targets, models and campaign stages
-│   ├── pack_sweep.py           Predictors per GPU and vCPUs per node: throughput sweep
-│   ├── tune_finetune.py        Ray Tune learning-rate search over complete Ray Train runs
-│   ├── tune_boltz.py           Ray Tune search over Boltz-2 inference settings
-│   └── check_serve.py          End-to-end check of the Serve application
-├── image/Containerfile         Container image: Ray 2.59, Boltz-2, OpenFold3 0.5 and 0.4.3
+│   ├── setup_data.py                   One-time download of data, published benchmark and weights
+│   ├── prepare_mpro.py                 One-time build of the SARS-CoV-2 and MERS-CoV Mpro targets
+│   ├── prepare_finetune.py             Builds the OpenFold3 training set from a fragment screen
+│   ├── bench_checkpoints.py            Benchmarks every fine-tuned checkpoint on every target
+│   ├── compare_targets.py              Summary table across targets, models and campaign stages
+│   ├── pack_sweep.py                   Predictors per GPU and vCPUs per node: throughput sweep
+│   ├── tune_finetune.py                Ray Tune learning-rate search over complete Ray Train runs
+│   ├── tune_boltz.py                   Ray Tune search over Boltz-2 inference settings
+│   └── check_serve.py                  End-to-end check of the Serve application
+├── image/Containerfile                 Container image: Ray 2.59, Boltz-2, OpenFold3 0.5 and 0.4.3
 └── docs/
-    ├── images/                 Figures and animations used in this README and the notebook
-    └── figures/                Scripts that redraw every figure from the benchmark results
+    ├── images/                         Figures and animations used in this README and the notebooks
+    └── figures/                        Scripts that redraw every figure from the benchmark results
 ```
 
 ---
@@ -443,23 +465,33 @@ anyscale job submit -f jobs/job.yaml --name aiddd-ev71 -- \
 serve run serve_viewer:app                              # viewer and live prediction
 ```
 
-To follow the workshop instead, open `workshop.ipynb` in the Workspace and run the cells in order.
+To follow the workshop instead, open `01_ray_and_offline_inference.ipynb` in the Workspace and run the
+cells in order, then `02_train_and_tune.ipynb` and `03_serve.ipynb`.
+
+Both notebook settings live in the Setup cell of each notebook:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `USE_GPUS` | `False` | `False` loads stored results for every GPU step. `True` runs them live and starts GPU nodes |
+| `AIDDD_SERVICE_URL` | unset | Environment variable holding the prediction service address for notebook 03. Unset, the notebook starts Ray Serve in the Workspace instead (needs `USE_GPUS = True`) |
 
 ### Workshop format
 
 Complete Steps 2, 2b and 4 before the session. The 90-minute session then runs as follows:
 
-| Minutes | Activity |
-|---|---|
-| 0 to 10 | Workspace setup; submit the smoke test while nodes start |
-| 10 to 25 | Smoke-test results and how to read the scoring output |
-| 25 to 45 | Full benchmark: comparison by campaign stage and across targets |
-| 45 to 60 | 3D viewer and pose overlays |
-| 60 to 80 | Fine-tuning OpenFold3 145k with Ray Train: a short live run, then the full run trained beforehand |
-| 80 to 90 | Live prediction with Ray Serve for a molecule suggested by the audience |
+| Minutes | Notebook | Activity |
+|---|---|---|
+| 0 to 10 | 01 | Workspace setup; submit the smoke test while nodes start |
+| 10 to 25 | 01 | Smoke-test results and how to read the scoring output |
+| 25 to 45 | 01 | Full benchmark: comparison by campaign stage and across targets |
+| 45 to 60 | 01 | 3D viewer and pose overlays |
+| 60 to 80 | 02 | Fine-tuning OpenFold3 145k with Ray Train: a short live run, then the full run trained beforehand |
+| 80 to 90 | 03 | Live prediction with Ray Serve for a molecule suggested by the audience |
 
-The Workspace has a limited number of GPUs, so run the notebook cells in order. The Serve application
-in Section 7 holds a GPU until the final cell stops it.
+The Workspace has a limited number of GPUs, so run the cells of each notebook in order. When notebook 03
+starts Ray Serve in the Workspace (`AIDDD_SERVICE_URL` unset and `USE_GPUS = True`), the application holds
+a GPU until the final cell stops it. Pointing `AIDDD_SERVICE_URL` at a deployed Anyscale Service instead
+uses no Workspace GPU at all.
 
 ---
 
