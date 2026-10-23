@@ -8,13 +8,17 @@ Reads aiddd_pipeline.py output (one row per crystal complex). Pick a model at
 the top, click a complex to see the predicted pose (green) over the X-ray
 ligand (orange). Uses 3Dmol.js from a CDN in the browser.
 
-Live prediction: paste a SMILES at the top and Boltz-2 predicts pose and
-affinity on an L4 replica (Boltz2Live), reusing the pipeline's Boltz-2 stage.
-Repeat SMILES come back from the cache under predictions/live/.
+Live prediction: paste a SMILES at the top. Two model deployments run in parallel,
+each on half an L4, so one of each shares a GPU:
+  FineTunedLive  pose, from OpenFold3 fine-tuned on the EV-A71 2A fragment screen
+  Boltz2Live     binding affinity (OpenFold3 does not predict affinity)
+Both reuse the pipeline's predictor classes. Repeat SMILES come back from the caches
+under predictions/live/ and predictions/live_of3ft/.
 
 pip install "ray[serve]" fastapi
 """
 
+import asyncio
 import hashlib
 import json
 import os
@@ -55,7 +59,7 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
  th[title]{cursor:help;text-decoration:underline dotted} #lread{font-size:12px;color:#444;margin-top:4px;line-height:1.4}
 </style></head><body>
 <div id="list">
-<form id="live" onsubmit="predict(event)"><h2>Live Boltz-2 prediction</h2>
+<form id="live" onsubmit="predict(event)"><h2>Live prediction</h2>
  <input id="smi" placeholder="SMILES, e.g. CNC(=O)c1nn(C)c2ccccc12" style="width:100%;box-sizing:border-box;padding:5px">
  <button style="margin:6px 0">Predict</button> <span id="lstat"></span><div id="lread"></div></form>
 <details><summary>How to read this page</summary><dl>
@@ -74,11 +78,13 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
   Fragments typically bind at 3 to 5; optimized compounds reach 7 or more. Blank means not measured.</dd>
  <dt>Colours in the 3D view</dt><dd><b style="color:#2e9e4f">Green</b>: the model's predicted pose.
   <b style="color:#f28c28">Orange</b>: the crystal pose. Grey ribbon: the predicted protein. Good predictions overlap.</dd>
- <dt>Live prediction</dt><dd><b>Ligand ipTM</b> (0 to 1) is Boltz-2's confidence in the protein-ligand interface; as a
+ <dt>Live prediction</dt><dd>The <b>pose</b> comes from OF3 fine-tuned, the most accurate model on this protein's
+  follow-on compounds. The <b>affinity</b> comes from Boltz-2, because OpenFold3 does not predict affinity.
+  <b>Ligand ipTM</b> (0 to 1) is the pose model's confidence in the protein-ligand interface; as a
   rough guide, above 0.8 is confident and below 0.5 is unreliable. <b>Affinity</b> is Boltz-2's predicted
   log<sub>10</sub>(IC<sub>50</sub> in µM), so <b>lower means tighter binding</b>: 2 ≈ 100 µM (weak), 0 = 1 µM,
-  −2 ≈ 10 nM (potent). <b>P(binder)</b> is the predicted probability that the molecule binds at all. Confidence is not
-  accuracy: Boltz-2 is often confidently wrong on this protein, so check its poses against the leaderboard.</dd>
+  −2 ≈ 10 nM (potent). <b>P(binder)</b> is Boltz-2's predicted probability that the molecule binds at all. Confidence
+  is not accuracy: check each model's record on the leaderboard before trusting a pose.</dd>
 </dl></details>
 <h2>__MODEL__: __N__ crystal complexes</h2><div>__TABS__</div><div id="stats">__STATS__</div>
 <table><tr><th title="Crystal structure identifier">Complex</th>
@@ -118,13 +124,14 @@ async function predict(ev){
   if(!r.ok || j.status === "failed" || j.status === "skipped"){ st.textContent = "failed: " + (j.error || r.status); return; }
   const m = j.metrics, f = v => (typeof v === "number" ? v.toFixed(2) : "n/a");
   const aff = m.affinity_pred_value, ic50 = typeof aff === "number" ? Math.pow(10, aff) : null;
-  const conf = m.ligand_iptm >= 0.8 ? "confident" : (m.ligand_iptm >= 0.5 ? "moderately confident" : "not confident");
+  const iptm = j.pose_iptm;
+  const conf = iptm >= 0.8 ? "confident" : (iptm >= 0.5 ? "moderately confident" : "not confident");
   document.getElementById("lread").innerHTML = (ic50 === null ? "" :
     `Predicted IC<sub>50</sub> ≈ <b>${ic50 >= 1 ? ic50.toFixed(ic50 >= 10 ? 0 : 1) + " µM" : (ic50 * 1000).toFixed(0) + " nM"}</b>
      (pIC<sub>50</sub> ${(6 - aff).toFixed(1)}; ${aff > 1 ? "weak" : (aff > -1 ? "moderate" : "potent")} binding). `) +
-    `Boltz-2 is ${conf} about this pose, and estimates a ${Math.round(100 * m.affinity_probability_binary)}% chance that the molecule binds. ` +
+    `${j.pose_model} is ${conf} about this pose. Boltz-2 estimates a ${Math.round(100 * m.affinity_probability_binary)}% chance that the molecule binds. ` +
     `No crystal structure exists for a new molecule, so there is no RMSD to check.`;
-  st.innerHTML = `ligand ipTM <b>${f(m.ligand_iptm)}</b> &middot; affinity <b>${f(m.affinity_pred_value)}</b> (log10 IC50, &micro;M) &middot; P(binder) <b>${f(m.affinity_probability_binary)}</b> &middot; ${j.seconds.toFixed(0)} s`;
+  st.innerHTML = `pose: ${j.pose_model}, ipTM <b>${f(iptm)}</b> &middot; affinity <b>${f(m.affinity_pred_value)}</b> (log10 IC50, &micro;M) &middot; P(binder) <b>${f(m.affinity_probability_binary)}</b> &middot; ${j.seconds.toFixed(0)} s`;
   document.getElementById("cur").textContent = "live: " + smi;
   viewer.clear(); viewer.addModel(j.cif, "cif");
   viewer.setStyle({model:0},{cartoon:{color:"#cfd8dc",opacity:0.6}});
@@ -135,11 +142,27 @@ const first = document.querySelector("tr[data-cid]"); if(first) show(first.datas
 </script></body></html>"""
 
 
-@serve.deployment(ray_actor_options={"num_gpus": 1, "accelerator_type": "L4"},
-                  autoscaling_config={"min_replicas": 1, "max_replicas": 4,
+def predict_one(pred, smiles: str) -> dict:
+    """One SMILES through a pipeline predictor, as a JSON-ready dict."""
+    from aiddd_pipeline import validate
+    lig_id = "smi_" + hashlib.sha1(smiles.encode()).hexdigest()[:12]
+    batch = validate(pd.DataFrame({"ligand_id": [lig_id], "smiles": [smiles]}))
+    r = pred(batch).iloc[0]
+    k = pred.key
+    out = {"ligand_id": lig_id, "status": r[f"{k}_status"], "error": r[f"{k}_error"],
+           "metrics": json.loads(r[f"{k}_metrics"]), "seconds": float(r[f"{k}_batch_seconds"])}
+    if r[f"{k}_cif"]:
+        out["cif"] = Path(r[f"{k}_cif"]).read_text()
+    return out
+
+
+# Half an L4 per replica: one Boltz2Live and one FineTunedLive share each GPU (about 5 and
+# 3 GB of its 24 GB). Two replicas of each fit the two L4s the Service is given.
+@serve.deployment(ray_actor_options={"num_gpus": 0.5, "accelerator_type": "L4"},
+                  autoscaling_config={"min_replicas": 1, "max_replicas": 2,
                                       "target_ongoing_requests": 1})
 class Boltz2Live:
-    """Boltz-2 on one L4 per replica. Same predictor class as the batch pipeline."""
+    """Boltz-2 affinity (and its own pose). Same predictor class as the batch pipeline."""
 
     def __init__(self):
         from aiddd_pipeline import Boltz2Predictor
@@ -150,22 +173,31 @@ class Boltz2Live:
         self.pred = LivePredictor()
 
     def __call__(self, smiles: str) -> dict:
-        from aiddd_pipeline import validate
-        lig_id = "smi_" + hashlib.sha1(smiles.encode()).hexdigest()[:12]
-        batch = validate(pd.DataFrame({"ligand_id": [lig_id], "smiles": [smiles]}))
-        r = self.pred(batch).iloc[0]
-        out = {"ligand_id": lig_id, "status": r.live_status, "error": r.live_error,
-               "metrics": json.loads(r.live_metrics), "seconds": float(r.live_batch_seconds)}
-        if r.live_cif:
-            out["cif"] = Path(r.live_cif).read_text()
-        return out
+        return predict_one(self.pred, smiles)
+
+
+@serve.deployment(ray_actor_options={"num_gpus": 0.5, "accelerator_type": "L4"},
+                  autoscaling_config={"min_replicas": 1, "max_replicas": 2,
+                                      "target_ongoing_requests": 1})
+class FineTunedLive:
+    """Pose from OpenFold3 fine-tuned on the EV-A71 2A fragment screen (the of3ft checkpoint)."""
+
+    def __init__(self):
+        from aiddd_pipeline import OF3_FT_CKPT, TARGETS, OF3Predictor
+        self.pred = OF3Predictor(key="live_of3ft", ckpt_path=str(OF3_FT_CKPT),
+                                 binary="/opt/of3-legacy/bin/run_openfold", target="ev71-2a",
+                                 out_dir=str(TARGETS["ev71-2a"].pred_root / "live_of3ft"))
+
+    def __call__(self, smiles: str) -> dict:
+        return predict_one(self.pred, smiles)
 
 
 @serve.deployment(num_replicas=1, ray_actor_options={"num_cpus": 1})
 @serve.ingress(api)
 class Viewer:
-    def __init__(self, live: DeploymentHandle):
-        self.live = live
+    def __init__(self, live: DeploymentHandle, pose: DeploymentHandle = None):
+        self.live = live   # Boltz-2: affinity
+        self.pose = pose   # fine-tuned OpenFold3: pose (None: use Boltz-2's pose)
         # File by file: a column that is all null in one file and numeric in another
         # will not merge as one Parquet dataset.
         self.df = pd.concat([pd.read_parquet(f) for f in sorted(RESULTS.glob("*.parquet"))], ignore_index=True)
@@ -197,7 +229,17 @@ class Viewer:
         smiles = str(body.get("smiles", "")).strip()
         if not smiles or len(smiles) > 300:
             return JSONResponse({"status": "failed", "error": "need a SMILES under 300 chars"}, 400)
-        out = await self.live.remote(smiles)
+        # Both models run at the same time, each on its own replica
+        if self.pose is None:
+            aff = await self.live.remote(smiles)
+            pose, pose_model = aff, MODELS["boltz2"]
+        else:
+            aff, pose = await asyncio.gather(self.live.remote(smiles), self.pose.remote(smiles))
+            pose_model = MODELS["of3ft"]
+        iptm = pose["metrics"].get("ligand_iptm", pose["metrics"].get("iptm"))
+        out = {**pose, "pose_model": pose_model, "pose_iptm": iptm,
+               "metrics": aff["metrics"], "affinity_status": aff["status"],
+               "seconds": max(pose["seconds"], aff["seconds"])}
         return JSONResponse(out, 200 if out["status"] in ("ok", "cached") else 422)
 
     @api.get("/structure/pred/{key}/{cid}", response_class=PlainTextResponse)
@@ -222,4 +264,11 @@ class Viewer:
         return PlainTextResponse("no ground truth", status_code=404)
 
 
-app = Viewer.bind(Boltz2Live.bind())
+def build_app(accelerator: str = "L4"):
+    """The Viewer composed with both model deployments, on the given GPU type."""
+    gpu = {"num_gpus": 0.5, "accelerator_type": accelerator}
+    return Viewer.bind(Boltz2Live.options(ray_actor_options=gpu).bind(),
+                       FineTunedLive.options(ray_actor_options=gpu).bind())
+
+
+app = build_app()

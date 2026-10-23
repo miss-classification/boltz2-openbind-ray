@@ -42,6 +42,9 @@ BOLTZ_CACHE = SHARED / "boltz_cache"
 OF3_CACHE = SHARED / "of3_cache"
 OF3_OB_CKPT = OF3_CACHE / "of3-ob-2025-06-30-174k.pt"   # OpenBind-0
 OF3_OB_URL = "https://openfold3-data.s3.amazonaws.com/openfold3-parameters/of3-ob-2025-06-30-174k.pt"
+OF3_P2_CKPT = OF3_CACHE / "of3-p2-145k.pt"           # OF3-p2: start of the released fine-tune
+OF3_P2_URL = "https://openfold3-data.s3.amazonaws.com/openfold3-parameters/of3-p2-145k.pt"
+OF3_LEGACY = "/opt/of3-legacy/bin/run_openfold"       # OF3-p2 weights only load in OpenFold3 0.4.x
 OF3_FT_CKPT = OF3_CACHE / "of3p2-ft-ev2a.ckpt"
 OF3_FT_URL = ("https://openfold3-data.s3.amazonaws.com/openfold3-parameters/"
               "openbind/of3p2-ft-ev2a.ckpt")
@@ -99,6 +102,7 @@ OF3_METRICS = ["sample_ranking_score", "avg_plddt", "gpde", "ptm", "iptm", "has_
 MODELS = {
     "boltz2": ("Boltz-2", "boltz-2"),
     "openbind0": ("OpenBind-0 (OF3)", None),
+    "of3p2": ("OF3-p2 145k (before fine-tuning)", "of3p2"),
     "of3ft": ("OF3 fine-tuned on EV-A71 2A", "of3p2_ft"),
     "of3ray": ("OF3 fine-tuned with Ray Train", None),   # your own weights from finetune_ray_train.py
 }
@@ -154,7 +158,8 @@ def gpu_report(out_dir: str) -> str:
         v = pd.read_csv(f, names=["t", "util", "mem"])
         per_node.append(v.util.mean())
     allv = pd.concat(pd.read_csv(f, names=["t", "util", "mem"]) for f in files)
-    shutil.rmtree(d, ignore_errors=True)
+    # The samples stay next to the results (the next run into --out clears them), so
+    # utilization can still be read after the job log is gone.
     return (f"GPU utilization: {allv.util.mean():.0f}% mean over {len(files)} GPU nodes "
             f"(per node {', '.join(f'{u:.0f}%' for u in per_node)}; "
             f"{(allv.util >= 50).mean():.0%} of samples at 50% or more)")
@@ -284,7 +289,7 @@ class OF3Predictor:
 
     def __init__(self, key: str, ckpt_path: str, binary: str = "run_openfold",
                  target: str = "ev71-2a", diffusion_samples: int = 1, data_workers: int = 2,
-                 monitor_dir: Optional[str] = None):
+                 monitor_dir: Optional[str] = None, out_dir: Optional[str] = None):
         start_gpu_monitor(monitor_dir)
         self.key = key
         self.t = TARGETS[target]
@@ -292,7 +297,7 @@ class OF3Predictor:
         self.samples = diffusion_samples
         self.data_workers = data_workers
         self.protein = read_first_sequence(self.t.path("fasta"))
-        self.out = self.t.pred_root / key
+        self.out = Path(out_dir) if out_dir else self.t.pred_root / key
         self.out.mkdir(parents=True, exist_ok=True)
         os.environ.setdefault("OPENFOLD_CACHE", str(OF3_CACHE))
         # OpenFold3 only reads MSA files whose name it recognizes (a key of its
@@ -643,13 +648,31 @@ def summarize(df, model_keys, curated, target: Target):
     return "\n".join(lines)
 
 
-# Relative GPU time per ligand, measured on an L4 with the default packing:
-# Boltz-2 (structure + affinity) costs about twice an OpenFold3 model.
-GPU_COST = {"boltz2": 2.0, "openbind0": 1.0, "of3ft": 1.0, "of3ray": 1.0}
+# Relative GPU time per ligand, measured on an L4 with the default packing. The
+# EV-A71 2A run of 2026-10-20 (308 ligands, 12 L4) put the true ratio at 1.6, not 2:
+# Boltz-2 took 8 GPUs and 47.1 min, OpenBind-0 took 4 and 58.9, so Boltz-2's eight
+# GPUs idled for the last twelve minutes. Pass --gpu-split to override per run,
+# which is necessary whenever the stages run on different GPU types.
+GPU_COST = {"boltz2": 1.6, "openbind0": 1.0, "of3p2": 1.0, "of3ft": 1.0, "of3ray": 1.0}
 
 
-def split_gpus(model_keys, total: int) -> dict:
-    """Whole GPUs per model stage, proportional to cost, at least one each."""
+def split_gpus(model_keys, total: int, override: Optional[str] = None) -> dict:
+    """Whole GPUs per model stage, proportional to cost, at least one each.
+
+    `override` is a comma list like "boltz2=7,openbind0=13", which wins outright.
+    """
+    if override:
+        share = {}
+        for part in override.split(","):
+            k, _, v = part.partition("=")
+            k = k.strip()
+            if k not in model_keys:
+                raise SystemExit(f"--gpu-split names {k!r}, which is not in --models {model_keys}")
+            share[k] = int(v)
+        missing = [k for k in model_keys if k not in share]
+        if missing:
+            raise SystemExit(f"--gpu-split must cover every model; missing {missing}")
+        return share
     w = {k: GPU_COST[k] for k in model_keys}
     share = {k: max(1, int(total * c / sum(w.values()))) for k, c in w.items()}
     # Hand any GPUs lost to rounding to the most expensive stages first.
@@ -672,6 +695,12 @@ def main():
                     help="Boltz-2 predictors sharing one GPU (one featurizes while another computes)")
     ap.add_argument("--of3-per-gpu", type=int, default=3,
                     help="OpenFold3 predictors sharing one GPU")
+    ap.add_argument("--cpus-per-gpu-node", type=int, default=8,
+                    help="vCPUs on one GPU worker (8 on g6.2xlarge, 16 on g6.4xlarge). Each predictor "
+                         "reserves this divided by the predictors sharing its GPU, less one for Ray")
+    ap.add_argument("--gpu-split", default=None,
+                    help="GPUs per model, e.g. 'boltz2=7,openbind0=13', instead of splitting "
+                         "--max-gpus by cost. Use it when the stages run on different GPU types")
     ap.add_argument("--max-gpus", type=int, default=8,
                     help="GPUs for the whole pipeline, split across model stages by their cost")
     ap.add_argument("--accelerator", default="L4", help="GPU type for every GPU stage")
@@ -683,6 +712,14 @@ def main():
                     help="only ligands with an experimental affinity value")
     ap.add_argument("--of3ray-ckpt", default=None,
                     help="weights for the of3ray model (default: latest finetune_ray_train.py run)")
+    ap.add_argument("--of3ray-legacy", action="store_true",
+                    help="of3ray weights were fine-tuned from of3-p2-145k (finetune_ray_train.py --base p2), "
+                         "so predict with the legacy OpenFold3 0.4.3")
+    ap.add_argument("--stage", default=None, choices=STAGES,
+                    help="only ligands from one campaign stage, e.g. 'late follow-on'")
+    ap.add_argument("--pred-dir", default=None,
+                    help="write predictions to <pred-dir>/<model> instead of the shared cache, "
+                         "so a live run recomputes every ligand")
     ap.add_argument("--out", default=None, help="output Parquet directory (default: results/<target>)")
     args = ap.parse_args()
     model_keys = [m.strip() for m in args.models.split(",") if m.strip()]
@@ -693,7 +730,8 @@ def main():
     for p in (target.path("metadata"), target.path("fasta"), target.path("msa"), target.structures, BOLTZ_CACHE):
         if not p.exists():
             raise SystemExit(f"Missing {p}. Run `python scripts/setup_data.py` first (README step 2).")
-    for key, ckpt, url in (("openbind0", OF3_OB_CKPT, OF3_OB_URL), ("of3ft", OF3_FT_CKPT, OF3_FT_URL)):
+    for key, ckpt, url in (("openbind0", OF3_OB_CKPT, OF3_OB_URL), ("of3p2", OF3_P2_CKPT, OF3_P2_URL),
+                           ("of3ft", OF3_FT_CKPT, OF3_FT_URL)):
         if key in model_keys and not ckpt.exists():
             ckpt.parent.mkdir(parents=True, exist_ok=True)
             print(f"Downloading {key} checkpoint -> {ckpt}")
@@ -712,6 +750,8 @@ def main():
     if args.affinity_only:
         lig = lig[lig.experimental_pKD.notna()]
         lig = lig.sample(min(args.limit, len(lig)), random_state=0) if args.limit else lig
+    if args.stage:
+        lig = lig[lig.stage == args.stage]
     print(f"Target: {target.name}")
     # Sort by size so each batch holds similar ligands: no batch waits on one giant.
     lig = lig.iloc[lig.smiles.str.len().argsort(kind="stable")].reset_index(drop=True)
@@ -730,25 +770,36 @@ def main():
     # busy, so fractional GPU actors that fit on the first nodes would never trigger a
     # scale up. A fixed size is always requested, and splitting the GPUs by each model's
     # cost per ligand lets every model finish at about the same time.
-    gpus = split_gpus(model_keys, args.max_gpus)
+    gpus = split_gpus(model_keys, args.max_gpus, args.gpu_split)
     per_gpu = {k: args.boltz_per_gpu if k == "boltz2" else args.of3_per_gpu for k in model_keys}
-    if "of3ft" in per_gpu:
-        per_gpu["of3ft"] = min(per_gpu["of3ft"], 2)   # 6.7 GB checkpoint per process: spare host RAM
+    # Models predicted with the legacy OpenFold3 0.4.3 take more host RAM per process (of3ft
+    # also loads a 6.7 GB checkpoint): three per node OOM-killed the raylet on 32 GB nodes.
+    # Say so, because a silent clamp makes a packing sweep look like it plateaus when the
+    # extra actors never ran.
+    legacy = {"of3ft", "of3p2"} | ({"of3ray"} if args.of3ray_legacy else set())
+    for k in legacy & set(per_gpu):
+        if per_gpu[k] > 2:
+            print(f"{k}: --of3-per-gpu {per_gpu[k]} clamped to 2 (legacy OpenFold3, host RAM)")
+            per_gpu[k] = 2
     print("GPUs per model: " + ", ".join(f"{k} {g} ({per_gpu[k]} per GPU)" for k, g in gpus.items()))
 
     def predictor(k):
+        out_dir = {"out_dir": str(Path(args.pred_dir) / k)} if args.pred_dir else {}
         if k == "boltz2":
             return Boltz2Predictor, {"target": target.key, "diffusion_samples": args.diffusion_samples,
-                                     "affinity_samples": args.affinity_samples, "monitor_dir": args.out}
-        # of3ft is an OF3-p2 checkpoint: it needs the legacy openfold3 in /opt/of3-legacy.
+                                     "affinity_samples": args.affinity_samples, "monitor_dir": args.out,
+                                     **out_dir}
+        # of3p2 and of3ft are OF3-p2 checkpoints: they need the legacy openfold3 in /opt/of3-legacy.
         if k == "of3ft":
-            ck = {"ckpt_path": str(OF3_FT_CKPT), "binary": "/opt/of3-legacy/bin/run_openfold"}
+            ck = {"ckpt_path": str(OF3_FT_CKPT), "binary": OF3_LEGACY}
+        elif k == "of3p2":
+            ck = {"ckpt_path": str(OF3_P2_CKPT), "binary": OF3_LEGACY}
         elif k == "of3ray":
-            ck = {"ckpt_path": str(of3ray_ckpt)}
+            ck = {"ckpt_path": str(of3ray_ckpt), **({"binary": OF3_LEGACY} if args.of3ray_legacy else {})}
         else:
             ck = {"ckpt_path": str(OF3_OB_CKPT)}
         return OF3Predictor, {"key": k, "target": target.key, "monitor_dir": args.out,
-                              "diffusion_samples": args.diffusion_samples, **ck}
+                              "diffusion_samples": args.diffusion_samples, **ck, **out_dir}
 
     def run_model(k):
         """One independent Ray Data pipeline per model. Models never wait on each other:
@@ -762,7 +813,8 @@ def main():
         ds = ray.data.from_pandas(lig[["ligand_id", "smiles", "smiles_ok"]]).repartition(n_blocks)
         out = ds.map_batches(cls, fn_constructor_kwargs=kwargs, batch_size=args.batch_size,
                              batch_format="pandas", num_gpus=1 / per_gpu[k],
-                             num_cpus=max(1, 8 // per_gpu[k] - 1), accelerator_type=acc,
+                             num_cpus=max(1, args.cpus_per_gpu_node // per_gpu[k] - 1),
+                             accelerator_type=acc,
                              compute=pool).to_pandas()
         print(f"  {MODELS[k][0]}: finished after {(time.time() - t0) / 60:.1f} min", flush=True)
         return out[["ligand_id"] + [c for c in out.columns if c.startswith(f"{k}_")]]

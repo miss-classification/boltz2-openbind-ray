@@ -1,0 +1,47 @@
+# Anyscale Job: how long does a cold 21-GPU cluster take to come up, and what
+# does it then do with 380 ligands?
+#
+#   anyscale job submit -f job_spinup.yaml --name spinup21
+#
+# min_nodes is 0 on purpose: the point is to measure a COLD start, so that the
+# workshop can decide whether its GPU groups have to be pinned beforehand.
+# scripts/wait_gpus.py asks the autoscaler for all 21 and prints a SPIN-UP line
+# before the pipeline begins, because the pipeline's own clock starts afterwards.
+#
+# 380 ligands means no --stage filter: there are only 308 late follow-ons. The
+# limit's reproducible mix is a quarter fragments, which are smaller and faster
+# than the late follow-ons a workshop run would use, so expect this to look
+# slightly better per ligand than the real demo will.
+#
+# Both models on all 380 is about 102 GPU-seconds per ligand, so roughly 30 min
+# of pipeline after the spin-up -- longer than a demo slot. That is deliberate
+# here: it is a measurement, not a rehearsal.
+name: aiddd-spinup
+image_uri: anyscale/image/aiddd-boltz2-of3:4
+working_dir: .
+excludes: [image, docs, .git, __pycache__, "*.ipynb"]
+env_vars:
+  AIDDD_SHARED: /mnt/user_storage/aiddd
+compute_config:
+  head_node:
+    instance_type: m5.2xlarge
+    resources: {CPU: 0}                   # the head node only drives the pipeline
+  worker_nodes:
+    - name: l4
+      instance_type: g6.4xlarge           # 1x L4 24 GB, 16 vCPU
+      min_nodes: 0                        # cold on purpose: this is the measurement
+      max_nodes: 21
+    - name: cpu
+      instance_type: m5.4xlarge           # pose scoring
+      min_nodes: 0
+      max_nodes: 4
+  enable_cross_zone_scaling: true
+entrypoint: >-
+  RUN=/mnt/user_storage/aiddd/workshop/spinup/$(date +%Y%m%d-%H%M%S) &&
+  python scripts/wait_gpus.py 21 &&
+  python aiddd_pipeline.py --target ev71-2a --models boltz2,openbind0
+  --limit 380 --gpu-split boltz2=14,openbind0=7
+  --boltz-per-gpu 2 --of3-per-gpu 3 --cpus-per-gpu-node 16
+  --batch-size 4 --affinity-samples 1
+  --pred-dir $RUN/predictions --out $RUN/results
+max_retries: 0

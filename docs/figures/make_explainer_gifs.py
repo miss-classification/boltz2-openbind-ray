@@ -1,21 +1,25 @@
 import numpy as np, matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib import font_manager
 from matplotlib.patches import FancyBboxPatch, Circle, Polygon, Rectangle
-import imageio.v2 as imageio
+from PIL import Image
 import io
 from pathlib import Path
 
-plt.rcParams["font.family"] = "Poppins"
+for _f in (Path(__file__).parent / "fonts").glob("*.ttf"):
+    font_manager.fontManager.addfont(str(_f))
+plt.rcParams["font.family"] = "Source Sans 3"
 
-INK, MUTED, SOFT, RULE = "#14161A", "#5E646E", "#9AA1AC", "#E6E8EB"
+# Same palette as common.py
+INK, MUTED, SOFT, RULE = "#1F2933", "#3E4C59", "#7B8794", "#E4E7EB"
 SURF, EDGE = "#F3F5F7", "#CDD3DA"
-TEAL, CORAL, BLUE, VIOLET, WHITE = "#0E9170", "#DB5B33", "#2D6FE0", "#6C63D8", "#FFFFFF"
+TEAL, CORAL, BLUE, VIOLET, WHITE = "#0F8B7A", "#C8553D", "#2563A6", "#6C63D8", "#FFFFFF"
 OUT = str(Path(__file__).resolve().parents[1] / "images")
 W, H = 1440, 810
 XU, YU = 160.0, 90.0
 
-STEP, HOLD, FADE, NFADE = 150, 4500, 70, 14   # frame durations in ms (imageio.v2 reads ms)
+STEP, HOLD, FADE, NFADE = 230, 6500, 80, 14   # frame durations in ms
 
 
 def ease(t):
@@ -34,7 +38,7 @@ def canvas():
 def finish(fig):
     buf = io.BytesIO(); fig.savefig(buf, format="png", facecolor=WHITE)
     plt.close(fig); buf.seek(0)
-    return np.asarray(imageio.imread(buf))[:, :, :3]
+    return np.asarray(Image.open(buf).convert("RGB"))
 
 
 def chrome(ax, title, stages, active, footer):
@@ -86,7 +90,16 @@ def assemble(scenes, path):
             for f in range(1, NFADE+1):
                 a = ease(f/(NFADE+1))
                 imgs.append((end*(1-a)+nxt*a).astype(np.uint8)); durs.append(FADE)
-    imageio.mimsave(path, imgs, duration=durs, loop=0, subrectangles=True)
+    # 1 shared palette for every frame: stable colours and a small file
+    frames = [Image.fromarray(a) for a in imgs]
+    w, h = frames[0].size
+    picks = frames[::max(1, len(frames) // 16)][:16]
+    sample = Image.new("RGB", (w, h * len(picks)))
+    for i, f in enumerate(picks):
+        sample.paste(f, (0, h * i))
+    pal = sample.quantize(colors=160, method=Image.Quantize.MEDIANCUT)
+    q = [f.quantize(palette=pal, dither=Image.Dither.NONE) for f in frames]
+    q[0].save(path, save_all=True, append_images=q[1:], duration=durs, loop=0, optimize=True, disposal=1)
     print(path, len(imgs), f"{sum(durs) / 1000:.1f}s")
 
 
@@ -98,7 +111,7 @@ S1 = ["Inputs", "Evolution", "Prediction", "Score"]
 F1 = ["2,147 complexes from 3 antiviral discovery campaigns",
       "1 precomputed alignment per target, reused by every prediction",
       "Boltz-2 and OpenBind-0 fan out across GPUs with Ray Data",
-      "Every pose scored, then compared with the published numbers"]
+      "Every pose scored against its crystal structure"]
 
 rng = np.random.default_rng(7)
 ANG = np.radians(np.array([90, 150, 210, 270, 330, 30.0]))
@@ -202,7 +215,7 @@ def g1_score(u):
             va="center", alpha=a)
     if u > 0.42:
         v = 1.19*ease((u-0.42)/0.26)
-        ax.text(98, 50, f"{v:.2f} A", fontsize=40, color=INK, weight=500)
+        ax.text(98, 50, f"{v:.2f} Å", fontsize=40, color=INK, weight=500)
         ax.text(98, 44, "ligand RMSD", fontsize=19, color=INK)
         ax.text(98, 39.5, "average gap between matched atoms",
                 fontsize=16, color=MUTED)
@@ -211,7 +224,7 @@ def g1_score(u):
         ax.add_patch(FancyBboxPatch((98, 27), 46, 7.0,
                      boxstyle="round,pad=0.5,rounding_size=1.6",
                      fc="#E9F5F0", ec=TEAL, lw=1.6, alpha=g, zorder=9))
-        ax.text(121, 30.6, "under 2 A, counted correct", fontsize=19,
+        ax.text(121, 30.6, "under 2 Å, counted correct", fontsize=19,
                 color="#0A6B51", ha="center", va="center", alpha=g,
                 zorder=10, weight=500)
     return finish(fig)
@@ -233,7 +246,7 @@ BONDS = [(0,1),(0,2),(0,5),(1,3),(2,4),(3,6),(4,7),(5,8),(8,9),(8,10),(9,11)]
 PH = [dict(n=3, word="weak", pot=0.18, sim=1.00,
            cap="Tiny molecules soaked into crystals",
            sub="A few stick, showing where to build",
-           foot="79 fragment structures fine-tune the model with Ray Train"),
+           foot="66 fragment structures fine-tune OpenFold3 with Ray Train"),
       dict(n=7, word="moderate", pot=0.55, sim=0.52,
            cap="Chemists grow the fragment outward,",
            sub="into the next sub-pocket along",
@@ -241,7 +254,7 @@ PH = [dict(n=3, word="weak", pot=0.18, sim=1.00,
       dict(n=12, word="potent", pot=0.93, sim=0.21,
            cap="Potent compounds fill the pocket",
            sub="with chemistry the screen never saw",
-           foot="802 follow-on compounds, the held-out test")]
+           foot="Follow-on compounds are the held-out test")]
 
 
 def bowl2():

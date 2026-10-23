@@ -17,16 +17,14 @@ W, H, DPI = 8.0, 4.5, 120
 NEW = "#7A4E9E"  # atoms added since the previous compound
 SERIES = [
     ("x0926a", "A71EV2A-x0926a", "Fragment screen",
-     "The project soaks hundreds of very small molecules (fragments) into protein crystals. "
-     "They bind weakly, but the crystal shows exactly where each one sits. This 14-atom fragment "
-     "is where the chemical series below starts."),
+     "Small molecules (fragments) are soaked into protein crystals. They bind weakly, "
+     "but each crystal shows exactly where. This 14-atom fragment starts the series."),
     ("x4431a", "A71EV2A-x4431a", "Early follow-on",
-     "Chemists keep the fragment's anchor and add new groups (purple) that reach further into the "
-     "pocket. Each new compound is made, crystallized and measured."),
+     "Chemists keep the fragment's anchor and add new groups (purple) that reach further "
+     "into the pocket."),
     ("x7259a", "A71EV2A-x7259a", "Late follow-on",
-     "Many design cycles later the compound is twice the size of the fragment and binds about "
-     "27 times more tightly than the early follow-on. Its new groups were never seen in the "
-     "fragment screen."),
+     "Many design cycles later, the compound is twice the size and binds about 27x more "
+     "tightly. Its new groups never appeared in the fragment screen."),
 ]
 
 res = load_results("ev71-2a")
@@ -69,7 +67,7 @@ def frame(stage_idx, lig_draw, title, body, facts, models, ghost=None):
     bar = fig.add_axes([0, 0, 1, 1], zorder=-1)
     bar.set_xlim(0, 1), bar.set_ylim(0, 1), bar.axis("off")
     bar.text(0.02, 0.955, "A chemical series from the EV-A71 2A campaign, crystal structures in the same pocket",
-             fontsize=7.5, color=MUTED, va="top")
+             fontsize=9, color=MUTED, va="top")
     # stage tracker
     names = ["Fragment", "Early follow-on", "Late follow-on", "Does each model keep up?"]
     x0, x1, y = 0.045, 0.955, 0.055
@@ -77,7 +75,7 @@ def frame(stage_idx, lig_draw, title, body, facts, models, ghost=None):
     for i, n in enumerate(names):
         bar.add_patch(Rectangle((x0 + i * w + 0.002, y + 0.022), w - 0.004, 0.006,
                                 color=INK if i <= stage_idx else RULE, lw=0))
-        bar.text(x0 + i * w + 0.003, y - 0.005, n, fontsize=8.2, va="center",
+        bar.text(x0 + i * w + 0.003, y - 0.008, n, fontsize=10, va="center",
                  color=INK if i == stage_idx else (INK2 if i < stage_idx else MUTED),
                  fontweight="bold" if i == stage_idx else "normal")
 
@@ -94,24 +92,24 @@ def frame(stage_idx, lig_draw, title, body, facts, models, ghost=None):
         art.set_clip_path(lens)
     ax.add_patch(plt.Circle((0, 0), SPAN * 0.98, fill=False, ec=RULE, lw=0.8))
 
-    bar.text(0.585, 0.86, title, fontsize=14, fontweight="bold", color=INK, va="top")
-    lines = textwrap.wrap(body, 47)
+    bar.text(0.585, 0.88, title, fontsize=18, fontweight="bold", color=INK, va="top")
+    lines = textwrap.wrap(body, 38)
     for k, line in enumerate(lines):
-        bar.text(0.585, 0.765 - k * 0.046, line, fontsize=9.6, color=INK2, va="baseline")
-    yy = 0.765 - len(lines) * 0.046 - 0.035
+        bar.text(0.585, 0.775 - k * 0.055, line, fontsize=12, color=INK2, va="baseline")
+    yy = 0.775 - len(lines) * 0.055 - 0.04
     for k, (lab, val) in enumerate(facts):
-        bar.text(0.585, yy - k * 0.05, lab, fontsize=8.8, color=MUTED, va="baseline")
-        bar.text(0.735, yy - k * 0.05, val, fontsize=9.4, color=INK, va="baseline")
+        bar.text(0.585, yy - k * 0.055, lab, fontsize=10.5, color=MUTED, va="baseline")
+        bar.text(0.70, yy - k * 0.055, val, fontsize=11.5, color=INK, va="baseline")
     if models:
-        yy = yy - len(facts) * 0.05 - 0.025
-        bar.text(0.585, yy, "Predicted pose error (ligand RMSD)", fontsize=8.8, color=MUTED, va="baseline")
+        yy = yy - len(facts) * 0.055 - 0.03
+        bar.text(0.585, yy, "Predicted pose error (ligand RMSD)", fontsize=10.5, color=MUTED, va="baseline")
         for k, m in enumerate(MODEL_COLORS):
             v = models[m]
-            yk = yy - 0.052 * (k + 1)
+            yk = yy - 0.058 * (k + 1)
             bar.add_patch(Rectangle((0.585, yk - 0.004), 0.011, 0.03, color=MODEL_COLORS[m], lw=0))
-            bar.text(0.603, yk, MODEL_SHORT[m], fontsize=9.4, color=INK, va="baseline")
-            bar.text(0.78, yk, f"{v:.1f} Å", fontsize=9.4, color=INK, va="baseline", ha="right")
-            bar.text(0.80, yk, "correct" if v < 2 else "wrong", fontsize=9.4, va="baseline", fontweight="bold",
+            bar.text(0.603, yk, MODEL_SHORT[m], fontsize=11.5, color=INK, va="baseline")
+            bar.text(0.82, yk, f"{v:.1f} Å", fontsize=11.5, color=INK, va="baseline", ha="right")
+            bar.text(0.84, yk, "correct" if v < 2 else "wrong", fontsize=11.5, va="baseline", fontweight="bold",
                      color=GOOD if v < 2 else BAD)
     return fig_to_image(fig, DPI)
 
@@ -144,7 +142,7 @@ def stage(idx, n=22):
         frames.append(frame(idx, draw, title, body, facts, models if i >= n * 0.6 else None,
                             ghost=prev))
         durs.append(80)
-    durs[-1] = 4200
+    durs[-1] = 5200
 
 
 def summary(n=26):
@@ -157,16 +155,16 @@ def summary(n=26):
         fig = plt.figure(figsize=(W, H), dpi=DPI)
         bar = fig.add_axes([0, 0, 1, 1], zorder=-1)
         bar.set_xlim(0, 1), bar.set_ylim(0, 1), bar.axis("off")
-        bar.text(0.045, 0.94, "Does each model keep up as the chemistry changes?", fontsize=14,
+        bar.text(0.045, 0.94, "Does each model keep up as the chemistry changes?", fontsize=18,
                  fontweight="bold", color=INK, va="top")
-        bar.text(0.045, 0.865, "Share of correct poses (ligand RMSD < 2 Å) on all 860 curated EV-A71 2A crystal "
-                 "structures, by campaign stage.", fontsize=9.4, color=INK2, va="top")
+        bar.text(0.045, 0.86, "Correct poses (ligand RMSD < 2 Å), 860 curated EV-A71 2A crystal structures, "
+                 "by campaign stage.", fontsize=11.5, color=INK2, va="top")
         x0, x1, y = 0.045, 0.955, 0.055
         names = ["Fragment", "Early follow-on", "Late follow-on", "Does each model keep up?"]
         w = (x1 - x0) / 4
         for k, nme in enumerate(names):
             bar.add_patch(Rectangle((x0 + k * w + 0.002, y + 0.022), w - 0.004, 0.006, color=INK, lw=0))
-            bar.text(x0 + k * w + 0.003, y - 0.005, nme, fontsize=8.2, va="center",
+            bar.text(x0 + k * w + 0.003, y - 0.008, nme, fontsize=10, va="center",
                      color=INK if k == 3 else INK2, fontweight="bold" if k == 3 else "normal")
         ax = fig.add_axes([0.1, 0.29, 0.6, 0.48])
         gx = np.arange(3)
@@ -177,26 +175,25 @@ def summary(n=26):
             if t > 0.999:
                 for g in gx:
                     ax.text(g + (k - 1) * (bw + 0.02), acc[m][g] + 2, f"{acc[m][g]:.0f}", ha="center",
-                            va="bottom", fontsize=8.5, color=INK)
-        ax.set_xticks(gx, [f"{l}\nn = {n_}" for l, n_ in zip(labels, ns)], fontsize=9)
+                            va="bottom", fontsize=10, color=INK)
+        ax.set_xticks(gx, [f"{l}\nn = {n_}" for l, n_ in zip(labels, ns)], fontsize=10.5)
         ax.set_ylim(0, 105), ax.set_yticks([0, 25, 50, 75, 100])
-        ax.set_ylabel("correct poses (%)", fontsize=9)
+        ax.set_ylabel("correct poses (%)", fontsize=10.5)
         ax.grid(axis="y", color=RULE, lw=0.6, zorder=0)
         ax.tick_params(axis="x", length=0)
         # legend, ink text with colour swatch
         for k, m in enumerate(MODEL_COLORS):
             yk = 0.74 - k * 0.055
             bar.add_patch(Rectangle((0.76, yk - 0.012), 0.014, 0.032, color=MODEL_COLORS[m], lw=0))
-            bar.text(0.782, yk + 0.004, MODEL_SHORT[m], fontsize=9.4, color=INK, va="center")
+            bar.text(0.782, yk + 0.004, MODEL_SHORT[m], fontsize=11.5, color=INK, va="center")
         if t > 0.999:
-            note = ("Boltz-2 places some fragments correctly but almost no follow-on compounds. "
-                    "OpenBind-0 does better as compounds grow. The fine-tuned model was trained on these "
-                    "fragment structures, so only its follow-on scores are a fair test.")
-            for k, line in enumerate(textwrap.wrap(note, 32, break_on_hyphens=False)):
-                bar.text(0.76, 0.55 - k * 0.045, line, fontsize=8.8, color=INK2, va="baseline")
+            note = ("Boltz-2 misses almost every follow-on. The fine-tuned model trained on these fragments, "
+                    "so only its follow-on scores are a fair test.")
+            for k, line in enumerate(textwrap.wrap(note, 27, break_on_hyphens=False)):
+                bar.text(0.76, 0.53 - k * 0.052, line, fontsize=10.5, color=INK2, va="baseline")
         frames.append(fig_to_image(fig, DPI))
         durs.append(80)
-    durs[-1] = 5500
+    durs[-1] = 6000
 
 
 if __name__ == "__main__":

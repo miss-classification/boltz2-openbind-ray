@@ -29,30 +29,36 @@ from aiddd_pipeline import (SHARED, TARGETS, _binding_chain_ca, _kabsch,  # noqa
 OUT = ROOT / "docs" / "images"
 
 # ---------------------------------------------------------------------------
-# Style: journal figure conventions. White ground, Arial-metric sans, thin
-# axes, ticks out, labels in ink (never in the series color).
+# Style: journal figure conventions. White ground, Source Sans 3 (OFL, in
+# fonts/), thin axes, ticks out, labels in ink (never in the series color).
 # ---------------------------------------------------------------------------
 for f in (Path(__file__).parent / "fonts").glob("*.ttf"):
     font_manager.fontManager.addfont(str(f))
 
-INK = "#1a1a1a"
-INK2 = "#4d4d4d"
-MUTED = "#8c8c8c"
-RULE = "#d9d9d9"
+INK = "#1F2933"
+INK2 = "#3E4C59"
+MUTED = "#7B8794"
+RULE = "#E4E7EB"
 BG = "#ffffff"
+FONT = "Source Sans 3"
+MONO = "Liberation Mono"
 
-# Model identity, fixed order. Checked for colour-vision deficiency:
-# every pair stays >= 16 OKLab dE under protan, deutan and tritan simulation.
-MODEL_COLORS = {"boltz2": "#1F5A96", "openbind0": "#E1A33B", "of3ft": "#B3412E"}
+# Model identity, fixed order: the 3 benchmark models. Distinct in hue and
+# lightness, so every pair also separates under colour-vision deficiency.
+MODEL_COLORS = {"boltz2": "#2563A6", "openbind0": "#D9922E", "of3ft": "#C8553D"}
 MODEL_NAMES = {"boltz2": "Boltz-2", "openbind0": "OpenBind-0", "of3ft": "OpenFold3 fine-tuned on EV-A71 2A"}
 MODEL_SHORT = {"boltz2": "Boltz-2", "openbind0": "OpenBind-0", "of3ft": "OF3 fine-tuned"}
-CRYSTAL = "#2b2b2b"
-GOOD = "#2E7D4F"
-BAD = "#B3412E"
+# The fine-tuning story: the general OF3-p2 145k model and our Ray Train fine-tune of it.
+# Kept out of MODEL_COLORS, which the benchmark figures iterate over.
+FT_COLORS = {"of3p2": "#7A8796", "of3ray": "#0F8B7A"}
+FT_NAMES = {"of3p2": "OF3-p2 145k (general model)", "of3ray": "Ours: fine-tuned with Ray Train"}
+CRYSTAL = "#22272E"
+GOOD = "#1E8A5A"
+BAD = "#C8553D"
 
 plt.rcParams.update({
-    "font.family": "Liberation Sans",
-    "font.size": 10,
+    "font.family": FONT,
+    "font.size": 11,
     "text.color": INK,
     "axes.labelcolor": INK2,
     "axes.edgecolor": INK2,
@@ -230,14 +236,15 @@ def fig_to_image(fig, dpi=100):
     return Image.open(buf).convert("RGB")
 
 
-GIF_PACE = 1.4   # every frame duration is multiplied by this; larger plays slower
+GIF_PACE = 2.4   # every frame duration is multiplied by this; larger plays slower
 
 
 def save_gif(frames, durations, path, colors=128, extra=()):
     """Quantize every frame to one shared palette (stable colours, small file).
     Named colours (models, crystal, good/bad) are pinned so they never drift."""
     import matplotlib.colors as mcolors
-    pinned = [BG, INK, INK2, MUTED, RULE, CRYSTAL, GOOD, BAD, *MODEL_COLORS.values(), *extra]
+    pinned = list(dict.fromkeys([BG, INK, INK2, MUTED, RULE, CRYSTAL, GOOD, BAD, *MODEL_COLORS.values(),
+                                 *FT_COLORS.values(), *extra]))
     w, h = frames[0].size
     k = min(len(frames), 16)
     sample = Image.new("RGB", (w, h * k))

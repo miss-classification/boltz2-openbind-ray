@@ -20,8 +20,15 @@ from aiddd_pipeline import SHARED, STAGES, TARGETS, pose_in_crystal_frame
 USER = os.environ.get("ANYSCALE_USERNAME") or os.environ.get("USER") or "attendee"
 MINE = SHARED / "workshop" / USER          # everything this attendee writes goes here
 
-MODEL_NAMES = {"boltz2": "Boltz-2", "openbind0": "OpenBind-0", "of3ft": "OF3 fine-tuned (EV-A71 2A)"}
-COLORS = {"crystal": "#2b2b2b", "boltz2": "#1F5A96", "openbind0": "#E1A33B", "of3ft": "#B3412E"}
+MODEL_NAMES = {"boltz2": "Boltz-2", "openbind0": "OpenBind-0", "of3p2": "OpenFold3 145k (general)",
+               "of3ray": "Fine-tuned with Ray Train", "of3ft": "OpenBind fine-tune (released)"}
+COLORS = {"crystal": "#22272E", "boltz2": "#2563A6", "openbind0": "#D9922E", "of3p2": "#7A8796",
+          "of3ray": "#0F8B7A", "of3ft": "#C8553D"}   # same palette as docs/figures/common.py
+MODEL_ORDER = ["boltz2", "openbind0", "of3p2", "of3ray", "of3ft"]
+# Results of the 145k base and of our fine-tunes are scored into their own folders
+# (results_base-of3p2/, results_<run>/) and joined onto the benchmark by complex.
+BASE_RESULTS = SHARED / "results_base-of3p2"
+OURS_RUN = os.environ.get("AIDDD_OURS_RUN")   # e.g. ft-p2-evfrag-1000s-8g-1023-0140; default: newest ft-p2-* run
 TARGET_KEYS = ["ev71-2a", "sars2-mpro", "mers-mpro"]
 warnings.filterwarnings("ignore", category=FutureWarning)
 _3DMOL = "https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.0.4/3Dmol-min.js"
@@ -252,11 +259,30 @@ def show_prediction(cif_text, label="", height=380):
 # ---------------------------------------------------------------------------
 # Results
 # ---------------------------------------------------------------------------
+def _parquet(path):
+    files = sorted(Path(path).glob("*.parquet"))
+    return pd.concat([pd.read_parquet(f) for f in files], ignore_index=True) if files else None
+
+
+def ours_run():
+    """The Ray Train fine-tune shown as "ours": AIDDD_OURS_RUN, or the newest benchmarked ft-p2-* run."""
+    if OURS_RUN:
+        return OURS_RUN
+    runs = sorted((p for p in SHARED.glob("results_ft-p2-*") if not any(w in p.name for w in ("smoke", "test"))),
+                  key=lambda p: p.stat().st_mtime)
+    return runs[-1].name[len("results_"):] if runs else None
+
+
 def load_results(target):
     """Scored binding events from the full benchmark, on the curated set (valid crystal
-    reference, no suspected crystallographic artefact), one row per crystal complex."""
-    path = SHARED / "results" / target
-    df = pd.concat([pd.read_parquet(f) for f in sorted(path.glob("*.parquet"))], ignore_index=True)
+    reference, no suspected crystallographic artefact), one row per crystal complex.
+    Adds the 145k base (of3p2_*) and our fine-tune (of3ray_*) where they have been scored."""
+    df = _parquet(SHARED / "results" / target)
+    for path, key in ((BASE_RESULTS / target, "of3p2"), (SHARED / f"results_{ours_run()}" / target, "of3ray")):
+        extra = _parquet(path)
+        if extra is not None and f"{key}_lig_rmsd" in extra:
+            cols = ["complex_name"] + [c for c in extra.columns if c.startswith(f"{key}_")]
+            df = df.drop(columns=[c for c in cols[1:] if c in df]).merge(extra[cols], on="complex_name", how="left")
     meta = pd.read_csv(TARGETS[target].path("metadata"))
     keep = meta.pb_valid_ref.astype(bool) & ~meta.suspected_artefact.astype(bool)
     return df[df.complex_name.isin(set(meta.loc[keep, "complex_name"]))].reset_index(drop=True)
@@ -268,20 +294,46 @@ def success(rmsd):
     return round(100 * (rmsd < 2).mean(), 1) if len(rmsd) else float("nan")
 
 
-def glance(results, models=("boltz2", "openbind0", "of3ft")):
+def _models(dfs, models):
+    """The requested models, in display order, that have scores in at least one table."""
+    models = models or MODEL_ORDER
+    return [m for m in MODEL_ORDER if m in models and any(f"{m}_lig_rmsd" in d for d in dfs)]
+
+
+def glance(results, models=None):
     """% of poses under 2 Å per model, per target and campaign phase."""
     cols = {}
     for t, df in results.items():
         for phase, mask in (("fragments", df.fragment_screen), ("follow-ons", ~df.fragment_screen)):
             if mask.any():
-                cols[f"{TARGETS[t].name}, {phase}"] = {MODEL_NAMES[m]: success(df.loc[mask, f"{m}_lig_rmsd"])
-                                                       for m in models}
+                cols[f"{TARGETS[t].name}, {phase}"] = {
+                    MODEL_NAMES[m]: success(df.loc[mask, f"{m}_lig_rmsd"]) if f"{m}_lig_rmsd" in df else float("nan")
+                    for m in _models(results.values(), models)}
     return pd.DataFrame(cols)
 
 
-def by_stage(df, models=("boltz2", "openbind0", "of3ft")):
-    return pd.DataFrame({st: {MODEL_NAMES[m]: success(df.loc[df.stage == st, f"{m}_lig_rmsd"]) for m in models}
+def by_stage(df, models=None):
+    return pd.DataFrame({st: {MODEL_NAMES[m]: success(df.loc[df.stage == st, f"{m}_lig_rmsd"])
+                              for m in _models([df], models)}
                          for st in STAGES if (df.stage == st).any()})
+
+
+def before_after(results, models=("of3p2", "of3ray", "of3ft")):
+    """Late follow-ons, % within 2 Å: the fine-tuning target (EV-A71 2A) next to the
+    proteases it was not trained on. A model not yet scored shows as "pending"."""
+    rows = {}
+    for m in models:
+        rows[MODEL_NAMES[m]] = {
+            f"{TARGETS[t].name} (late follow-ons)": (success(df.loc[df.stage == "late follow-on", f"{m}_lig_rmsd"])
+                                                     if f"{m}_lig_rmsd" in df else "pending")
+            for t, df in results.items()}
+    return pd.DataFrame(rows).T
+
+
+def loss_curve(run):
+    """Per-step metrics of a finished finetune_ray_train.py run, or None."""
+    found = sorted((SHARED / "finetune" / "runs" / run).glob("checkpoint_*/loss_curve.json")) if run else []
+    return pd.DataFrame(json.loads(found[-1].read_text())) if found else None
 
 
 def serve_link(path="/"):

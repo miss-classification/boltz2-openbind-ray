@@ -1,0 +1,50 @@
+# Anyscale Job: OpenBind EV-A71 2A benchmark on an autoscaling GPU cluster.
+#
+#   anyscale job submit -f job.yaml                                    # full benchmark, all three models
+#   anyscale job submit -f job.yaml -- python scripts/setup_data.py    # one-time data download
+#   anyscale job submit -f job.yaml -- python aiddd_pipeline.py --limit 8 --max-gpus 2
+#
+# Every worker group starts at zero nodes and scales with the Ray Data queue,
+# so you only pay for GPUs while there is work for them.
+#
+# For larger proteins, add an L40S group (instance_type g6e.2xlarge) and pass
+# --of3-accelerator L40S. Only add it when you use it: otherwise the autoscaler
+# may start L40S nodes that no stage can use.
+name: aiddd-finetune-g6x4
+image_uri: anyscale/image/aiddd-boltz2-of3:4
+working_dir: .
+excludes: [image, docs, .git, __pycache__]
+env_vars:
+  AIDDD_SHARED: /mnt/user_storage/aiddd   # shared by Workspaces and Jobs
+  RAY_TRAIN_WORKER_GROUP_START_TIMEOUT_S: "900"   # Ray Train: allow time for GPU nodes to start
+compute_config:
+  head_node:
+    instance_type: m5.2xlarge
+    resources: {CPU: 0}                   # the head node only drives the pipeline
+  worker_nodes:
+    - name: l4
+      instance_type: g6.4xlarge           # 1x L4 24 GB, 16 vCPU: OF3 featurizes on CPU
+      min_nodes: 0
+      max_nodes: 20
+      market_type: PREFER_SPOT            # spot, falling back to on-demand when scarce
+    # L4 is exhausted region-wide, so give the autoscaler two more GPU pools to draw
+    # from. Each fine-tune is pinned to one accelerator type (--accelerator) so the runs
+    # never compete for the same capacity. All are 24 GB or more and support bf16, so the
+    # training maths is unchanged; only step time differs between them.
+    - name: a10g
+      instance_type: g5.4xlarge           # 1x A10G 24 GB, 16 vCPU
+      min_nodes: 0
+      max_nodes: 20
+      market_type: PREFER_SPOT
+    - name: l40s
+      instance_type: g6e.4xlarge          # 1x L40S 48 GB, 16 vCPU
+      min_nodes: 0
+      max_nodes: 20
+      market_type: PREFER_SPOT
+    - name: cpu
+      instance_type: m5.4xlarge           # validation and pose scoring
+      min_nodes: 0
+      max_nodes: 4
+  enable_cross_zone_scaling: true
+entrypoint: python finetune_ray_train.py
+max_retries: 0

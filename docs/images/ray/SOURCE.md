@@ -14,3 +14,11 @@ licensed under the Apache License 2.0. Copyright The Ray Authors.
 | train-overview.png | https://docs.ray.io/en/latest/train/overview.html |
 | tune_flow.png | https://docs.ray.io/en/latest/tune/key-concepts.html |
 | serve-architecture.svg | https://docs.ray.io/en/latest/serve/architecture.html |
+| train-worker-node-failure.png, train-worker-group-recovery.png | https://docs.ray.io/en/latest/train/user-guides/fault-tolerance.html |
+| train-checkpoint-storage.png | https://docs.ray.io/en/latest/train/user-guides/persistent-storage.html |
+| data-batch-inference.png | https://docs.ray.io/en/latest/data/batch_inference.html |
+| serve-model-composition.png | https://docs.ray.io/en/latest/serve/model_composition.html |
+| serve-autoscaling.svg | https://docs.ray.io/en/latest/serve/autoscaling-guide.html |
+
+Added 2026-10-23 from github.com/ray-project/ray (doc/source/...) and github.com/ray-project/images
+(docs/serve/...), renamed only.

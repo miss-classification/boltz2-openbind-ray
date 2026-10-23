@@ -9,7 +9,7 @@
 import numpy as np
 from matplotlib.patches import FancyBboxPatch, Rectangle
 
-from common import (BG, CRYSTAL, GOOD, BAD, INK, INK2, MUTED, RULE, MODEL_COLORS, OUT, SHARED, TARGETS,
+from common import (BG, CRYSTAL, GOOD, BAD, INK, INK2, MONO, MUTED, RULE, MODEL_COLORS, OUT, SHARED, TARGETS,
                     ca_trace, draw_backbone, draw_ligand, fig_to_image, load_crystal, load_prediction_in_crystal_frame,
                     load_results, plt, rot_x, rot_y, save_gif, smooth_trace, view_matrix)
 
@@ -85,22 +85,22 @@ def new_frame(step, caption=True):
         done, now = i < step, i == step
         bar.add_patch(Rectangle((x0 + i * w + 0.002, y + 0.022), w - 0.004, 0.006,
                                 color=INK if (done or now) else RULE, lw=0))
-        bar.text(x0 + i * w + 0.003, y - 0.005, f"{i + 1}  {name}", fontsize=8.2,
+        bar.text(x0 + i * w + 0.003, y - 0.008, f"{i + 1}  {name}", fontsize=10,
                  color=INK if now else (INK2 if done else MUTED), fontweight="bold" if now else "normal",
                  va="center", ha="left")
     if caption:
-        bar.text(0.02, 0.955, "EV-A71 2A protease with compound x7259a (late follow-on, pKD 7.9)", fontsize=7.5,
+        bar.text(0.02, 0.955, "EV-A71 2A protease with compound x7259a (late follow-on, pKD 7.9)", fontsize=9,
                  color=MUTED, ha="left", va="top")
     return fig, bar
 
 
-def text_block(bar, step_title, body, x=0.585, y=0.86, width=47):
+def text_block(bar, step_title, body, x=0.585, y=0.86, width=38):
     """Title plus body text, one line per call so every line sits on the same grid."""
     import textwrap
-    bar.text(x, y, step_title, fontsize=14, fontweight="bold", color=INK, va="top", ha="left")
+    bar.text(x, y, step_title, fontsize=18, fontweight="bold", color=INK, va="top", ha="left")
     for k, line in enumerate(textwrap.wrap(body, width)):
-        bar.text(x, y - 0.125 - k * 0.046, line, fontsize=9.6, color=INK2, va="baseline", ha="left")
-    return y - 0.1 - len(textwrap.wrap(body, width)) * 0.046
+        bar.text(x, y - 0.13 - k * 0.056, line, fontsize=12, color=INK2, va="baseline", ha="left")
+    return y - 0.1 - len(textwrap.wrap(body, width)) * 0.056
 
 
 def mol_axes(fig):
@@ -116,7 +116,7 @@ def key(ax, items):
     for k, (label, color) in enumerate(items):
         y = 0.04 + (len(items) - 1 - k) * 0.055
         ax.plot([0.03, 0.08], [y, y], color=color, lw=3, transform=ax.transAxes, solid_capstyle="round")
-        ax.text(0.1, y, label, fontsize=8, color=INK2, va="center", transform=ax.transAxes)
+        ax.text(0.1, y, label, fontsize=10, color=INK2, va="center", transform=ax.transAxes)
 
 
 def view(t):
@@ -125,7 +125,7 @@ def view(t):
 
 
 def tag(ax, xy, text, color, dx=4.5, dy=4.0, ha="left"):
-    ax.annotate(text, xy=xy, xytext=(xy[0] + dx, xy[1] + dy), fontsize=9, color=INK, fontweight="bold",
+    ax.annotate(text, xy=xy, xytext=(xy[0] + dx, xy[1] + dy), fontsize=11, color=INK, fontweight="bold",
                 ha=ha, va="center", arrowprops=dict(arrowstyle="-", color=color, lw=1.2, shrinkA=0, shrinkB=4),
                 bbox=dict(boxstyle="round,pad=0.25", fc=BG, ec="none"))
 
@@ -150,21 +150,21 @@ def scene_question(n=26):
         draw_backbone(ax, trace, R, center)
         p = (xtal["lig"].mean(0) - center) @ R.T
         ax.add_patch(plt.Circle(p[:2], 5.5, fill=False, ls=(0, (2, 2)), lw=1.1, color=INK2, zorder=6))
-        ax.text(p[0], p[1] - 7.5, "binding pocket", fontsize=8.5, color=INK2, ha="center", va="top", zorder=6)
+        ax.text(p[0], p[1] - 7.5, "binding pocket", fontsize=10.5, color=INK2, ha="center", va="top", zorder=6)
         text_block(bar, "Where does a drug bind?",
-                   "A drug works by fitting into a pocket on a protein. Co-folding models predict the 3D "
-                   "structure of the protein and the drug molecule together, from just 2 text inputs:")
+                   "Co-folding models predict the protein and the compound together in 3D, "
+                   "from 2 text inputs only.")
         k = int(len(SEQ) * ease(t * 1.6))
-        bar.text(0.585, 0.47, "Protein sequence (amino acids)", fontsize=8.2, color=MUTED, va="top")
+        bar.text(0.585, 0.50, "Protein sequence", fontsize=10.5, color=MUTED, va="top")
         seq = SEQ[:k]
-        bar.text(0.585, 0.425, (seq[:40] + ("\n" + seq[40:80] if k > 40 else "")) + (" …" if k > 80 else ""),
-                 fontsize=8.3, family="Liberation Mono", color=INK, va="top", linespacing=1.3)
+        bar.text(0.585, 0.445, (seq[:34] + ("\n" + seq[34:68] if k > 34 else "")) + (" …" if k > 68 else ""),
+                 fontsize=9.5, family=MONO, color=INK, va="top", linespacing=1.3)
         s = SMILES[:int(len(SMILES) * ease(t * 1.6 - 0.3))]
-        bar.text(0.585, 0.30, "Drug molecule (SMILES)", fontsize=8.2, color=MUTED, va="top")
-        bar.text(0.585, 0.255, s[:40] + ("\n" + s[40:] if len(s) > 40 else ""), fontsize=8.3,
-                 family="Liberation Mono", color=INK, va="top", linespacing=1.3)
+        bar.text(0.585, 0.31, "Compound (SMILES)", fontsize=10.5, color=MUTED, va="top")
+        bar.text(0.585, 0.255, s[:34] + ("\n" + s[34:] if len(s) > 34 else ""), fontsize=9.5,
+                 family=MONO, color=INK, va="top", linespacing=1.3)
         add(fig_to_image(fig, DPI), 90)
-    durs[-1] = 1800
+    durs[-1] = 2600
 
 
 def scene_crystal(n=22):
@@ -179,13 +179,12 @@ def scene_crystal(n=22):
         if a > 0.95:
             c = p.mean(0)
             tag(ax, (c[0] - 3.5, c[1] + 2.5), "crystal pose", CRYSTAL, dx=-7, dy=6.5, ha="right")
-        text_block(bar, "The answer key: X-ray crystals",
-                   "An X-ray crystal structure shows where the drug really sits, atom by atom. "
-                   "This workshop uses 2,147 crystal structures from 3 antiviral drug "
-                   "discovery projects (EV-A71 2A protease, SARS-CoV-2 and MERS-CoV main protease). "
-                   "The models never see these structures: they get only the 2 text inputs.")
+        text_block(bar, "The answer key: crystals",
+                   "A crystal structure shows where the compound actually binds. "
+                   "2,147 structures from 3 antiviral campaigns serve as ground truth. "
+                   "The models never see them.")
         add(fig_to_image(fig, DPI), 90)
-    durs[-1] = 2200
+    durs[-1] = 3000
 
 
 def scene_predict(n=36):
@@ -210,11 +209,10 @@ def scene_predict(n=36):
         key(ax, [("crystal pose (faint)", CRYSTAL), ("OpenBind-0", MODEL_COLORS["openbind0"]),
                  ("Boltz-2", MODEL_COLORS["boltz2"])])
         text_block(bar, "2 models, 2 predictions",
-                   "OpenBind-0 and Boltz-2 are diffusion models. Each starts from atoms placed at random "
-                   "and refines them, step by step, into a 3D pose. Given the same inputs and the same "
-                   "protein, the 2 models place the drug in different positions.")
+                   "Each model refines randomly placed atoms into a 3D pose. "
+                   "From identical inputs, OpenBind-0 and Boltz-2 reach different answers.")
         add(fig_to_image(fig, DPI), 90)
-    durs[-1] = 1800
+    durs[-1] = 2800
 
 
 def scene_score(n=30):
@@ -234,21 +232,20 @@ def scene_score(n=30):
         key(ax, [("crystal pose", CRYSTAL), ("OpenBind-0", MODEL_COLORS["openbind0"]),
                  ("Boltz-2", MODEL_COLORS["boltz2"]), ("atom-to-atom error", MUTED)])
         text_block(bar, "Score against the crystal",
-                   "The predicted protein is superposed on the crystal protein. Then the error is measured "
-                   "as ligand RMSD: the typical distance between each predicted atom and the same atom "
-                   "in the crystal. Below 2 Å, about 1 bond length, the pose counts as correct.")
+                   "Ligand RMSD: the typical distance between each predicted atom and its crystal "
+                   "position. Below 2 Å, about 1 bond length, a pose counts as correct.")
         for k, m in enumerate(SHOWN):
             if a < 0.99:
                 continue
             ok = rmsd[m] < 2
-            y = 0.31 - k * 0.085
+            y = 0.36 - k * 0.09
             bar.add_patch(Rectangle((0.585, y - 0.02), 0.012, 0.04, color=MODEL_COLORS[m], lw=0))
-            bar.text(0.607, y, SHOWN[m], fontsize=10, color=INK, va="center", fontweight="bold")
-            bar.text(0.76, y, f"{rmsd[m]:.1f} Å", fontsize=10, color=INK, va="center")
-            bar.text(0.84, y, "correct pose" if ok else "wrong pocket", fontsize=10,
+            bar.text(0.607, y, SHOWN[m], fontsize=12, color=INK, va="center", fontweight="bold")
+            bar.text(0.76, y, f"{rmsd[m]:.1f} Å", fontsize=12, color=INK, va="center")
+            bar.text(0.84, y, "correct pose" if ok else "wrong pocket", fontsize=12,
                      color=GOOD if ok else BAD, va="center", fontweight="bold")
         add(fig_to_image(fig, DPI), 90)
-    durs[-1] = 2600
+    durs[-1] = 4000
 
 
 def grid_layout(g, rows):
@@ -277,23 +274,22 @@ def scene_scale(n=40):
     for i in range(n + 1):
         t = ease(i / n)
         fig, bar = new_frame(4, caption=False)
-        bar.text(0.045, 0.94, "Scale up: every crystal structure, 3 models", fontsize=14,
+        bar.text(0.045, 0.94, "Scale up: every crystal structure, 3 models", fontsize=18,
                  fontweight="bold", color=INK, va="top")
-        bar.text(0.045, 0.865, "Ray Data runs all 3 models at once on an autoscaling cluster of L4 GPUs. "
-                 "Each square is 1 crystal structure,\nin the order the drug discovery project made them. "
-                 "Filled: pose within 2 Å of the crystal. Pale: wrong pose.",
-                 fontsize=9.2, color=INK2, va="top", linespacing=1.45)
+        bar.text(0.045, 0.855, "Ray Data runs the 3 models on autoscaling L4 GPUs. 1 square = 1 crystal structure,\n"
+                 "in campaign order. Filled: within 2 Å of the crystal. Pale: wrong pose.",
+                 fontsize=11, color=INK2, va="top", linespacing=1.4)
         for tkey in grids:
-            bar.text(x_px[tkey] / pw, 1 - (top_px - 8) / ph, names[tkey], fontsize=9.2, fontweight="bold",
+            bar.text(x_px[tkey] / pw, 1 - (top_px - 8) / ph, names[tkey], fontsize=10.5, fontweight="bold",
                      color=INK, va="bottom")
         done = t >= 0.999
         for r_, m in enumerate(MODEL_COLORS):
             yc = 1 - (top_px + r_ * row_px + rows * cpx / 2) / ph
-            bar.text(0.045, yc, labels[m], fontsize=9.2, color=INK, fontweight="bold", va="center", linespacing=1.2)
+            bar.text(0.045, yc, labels[m], fontsize=10, color=INK, fontweight="bold", va="center", linespacing=1.2)
             for tkey, g in grids.items():
                 if done:
                     bar.text((x_px[tkey] + lay[tkey][2] * cpx + 10) / pw, yc, f"{100 * g[m].mean():.0f}%",
-                             fontsize=11, fontweight="bold", color=INK, va="center")
+                             fontsize=13, fontweight="bold", color=INK, va="center")
         yb = 1 - (top_px + 2 * row_px + rows * cpx + 6) / ph
         for tkey, g in grids.items():
             _, starts, _ = lay[tkey]
@@ -301,7 +297,7 @@ def scene_scale(n=40):
                 x = (x_px[tkey] + c * cpx) / pw
                 drop = 0.04 if k == 0 else 0.0
                 bar.plot([x, x], [yb + 0.008, yb - drop - 0.004], color=MUTED, lw=0.7)
-                bar.text(x + 0.004, yb - drop, lab, fontsize=7.2, color=MUTED, va="top")
+                bar.text(x + 0.004, yb - drop, lab, fontsize=8.5, color=MUTED, va="top")
         img = fig_to_image(fig, DPI)
         px = img.load()
         for r_, m in enumerate(MODEL_COLORS):
@@ -316,20 +312,20 @@ def scene_scale(n=40):
                         for dy in range(cpx - 1):
                             px[x0 + dx, y0 + dy] = fill
         add(img, 80)
-    durs[-1] = 4200
+    durs[-1] = 5000
 
 
 def scene_workflow(n=30):
     boxes = [("Data", "Public datasets", "2,147 crystal\nstructures with\nmeasured affinity"),
              ("Predict", "Ray Data", "3 models on\nautoscaling\nL4 GPUs"),
              ("Score", "Ray Data", "Ligand RMSD\nagainst every\ncrystal"),
-             ("Fine-tune", "Ray Train", "OpenFold3 on\nthe fragment\nscreen, 2 GPUs"),
+             ("Fine-tune", "Ray Train", "OpenFold3 145k\non 66 fragment\nstructures, 8 GPUs"),
              ("Serve", "Ray Serve", "Pose and affinity\nfor a new molecule,\n3D viewer")]
     for i in range(n):
         fig, bar = new_frame(5, caption=False)
-        bar.text(0.045, 0.94, "What you build in this workshop", fontsize=14, fontweight="bold", color=INK, va="top")
-        bar.text(0.045, 0.865, "A reproducible pipeline, from public crystal data to a model you can query live.",
-                 fontsize=9.6, color=INK2, va="top")
+        bar.text(0.045, 0.94, "What you build in this workshop", fontsize=18, fontweight="bold", color=INK, va="top")
+        bar.text(0.045, 0.855, "A reproducible pipeline, from public crystal data to a model you can query live.",
+                 fontsize=12, color=INK2, va="top")
         lit = min(len(boxes), int(i / 4) + 1)
         bw, gap, x = 0.165, 0.0262, 0.045
         for k, (title, tech, body) in enumerate(boxes):
@@ -338,20 +334,20 @@ def scene_workflow(n=30):
             bar.add_patch(FancyBboxPatch((bx, 0.30), bw, 0.42, boxstyle="round,pad=0,rounding_size=0.012",
                                          fc=BG, ec=INK if on else RULE, lw=1.1 if on else 0.8))
             bar.text(bx + 0.015, 0.67, f"{k + 1}", fontsize=9, color=MUTED, va="top")
-            bar.text(bx + 0.015, 0.605, title, fontsize=13, fontweight="bold", color=INK if on else MUTED, va="top")
-            bar.text(bx + 0.015, 0.525, tech, fontsize=8.8, color="#1F5A96" if on else MUTED, va="top",
+            bar.text(bx + 0.015, 0.605, title, fontsize=15, fontweight="bold", color=INK if on else MUTED, va="top")
+            bar.text(bx + 0.015, 0.525, tech, fontsize=10.5, color=MODEL_COLORS["boltz2"] if on else MUTED, va="top",
                      fontweight="bold")
-            bar.text(bx + 0.015, 0.455, body, fontsize=8.3, color=INK2 if on else MUTED, va="top", linespacing=1.4)
+            bar.text(bx + 0.015, 0.455, body, fontsize=9.8, color=INK2 if on else MUTED, va="top", linespacing=1.35)
             if k < len(boxes) - 1:
                 bar.annotate("", xy=(bx + bw + gap - 0.003, 0.51), xytext=(bx + bw + 0.003, 0.51),
                              arrowprops=dict(arrowstyle="-|>", color=INK2 if k + 1 < lit else RULE, lw=0.9,
                                              mutation_scale=8))
         if lit == len(boxes):
-            bar.text(0.045, 0.235, "Reference runs: 1 benchmark job per target on 8 L4 GPUs, 89% mean GPU "
-                     "utilization.\nFine-tuning: 150 optimizer steps on 2 L4 GPUs in 28 minutes.",
-                     fontsize=9, color=INK2, va="top", linespacing=1.5)
+            bar.text(0.045, 0.235, "Benchmark: 1 job per target on 8 to 12 L4 GPUs, about 80% GPU utilization.\n"
+                     "Fine-tuning: 1,000 optimizer steps on 8 GPUs, about 2 hours.",
+                     fontsize=11, color=INK2, va="top", linespacing=1.5)
         add(fig_to_image(fig, DPI), 120)
-    durs[-1] = 4000
+    durs[-1] = 5000
 
 
 if __name__ == "__main__":

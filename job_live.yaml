@@ -1,0 +1,32 @@
+# Anyscale Job: the workshop's live run. All 308 EV-A71 2A late follow-ons through Boltz-2
+# and OpenBind-0 on 12 L4 GPUs, into a fresh prediction folder so nothing comes from cache.
+#
+#   anyscale job submit -f job_live.yaml --name live16-test
+#
+# Part of the 16-L4 workshop budget: 12 here, 2 for the notebook, 2 for the Service.
+# On the day, set min_nodes to 12 so the GPUs are already running when the session starts.
+name: aiddd-live-run
+image_uri: anyscale/image/aiddd-boltz2-of3:4
+working_dir: .
+excludes: [image, docs, .git, __pycache__]
+env_vars:
+  AIDDD_SHARED: /mnt/user_storage/aiddd
+compute_config:
+  head_node:
+    instance_type: m5.2xlarge
+    resources: {CPU: 0}                   # the head node only drives the pipeline
+  worker_nodes:
+    - name: l4
+      instance_type: g6.2xlarge           # 1x L4 24 GB
+      min_nodes: 0
+      max_nodes: 12
+    - name: cpu
+      instance_type: m5.4xlarge           # pose scoring
+      min_nodes: 0
+      max_nodes: 4
+  enable_cross_zone_scaling: true
+entrypoint: >-
+  RUN=/mnt/user_storage/aiddd/workshop/live/$(date +%Y%m%d-%H%M%S) &&
+  python aiddd_pipeline.py --target ev71-2a --stage "late follow-on" --models boltz2,openbind0
+  --max-gpus 12 --batch-size 4 --affinity-samples 1 --pred-dir $RUN/predictions --out $RUN/results
+max_retries: 0
