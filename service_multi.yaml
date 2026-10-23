@@ -1,0 +1,27 @@
+# Anyscale Service: the multiplexed viewer. One L4 serves a house model and many program
+# specialists from a single OpenFold3 pool, plus Boltz-2 for affinity.
+#
+#   anyscale service deploy -f service_multi.yaml       # prints the URL to share
+#   anyscale service terminate -n aiddd-viewer-multi    # after the session
+#
+# Separate from service.yaml (aiddd-viewer / the hot-swap dry run). Same image.
+name: aiddd-viewer-multi
+image_uri: anyscale/image/aiddd-boltz2-of3:4
+working_dir: .
+excludes: [image, docs, .git, .bin, __pycache__, "*.ipynb", .ipynb_checkpoints]
+env_vars:
+  AIDDD_SHARED: /mnt/shared_storage/aiddd
+# Anyone with the URL can open the page and run GPU predictions (on at most 1 L4).
+# Terminate the service when the session ends.
+query_auth_token_enabled: false
+compute_config:
+  head_node:
+    instance_type: m5.2xlarge             # the Viewer page and the HTTP proxy
+  worker_nodes:
+    - name: l4
+      instance_type: g6.2xlarge           # 1x L4: Boltz2Live and the OF3Pool share it
+      min_nodes: 1                         # one GPU runs the whole small-shop demo
+      max_nodes: 1
+  enable_cross_zone_scaling: true          # take the L4 from any availability zone in the region
+applications:
+  - import_path: serve_viewer_multi:app
