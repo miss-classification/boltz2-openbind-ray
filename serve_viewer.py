@@ -186,10 +186,10 @@ def live_cache(pred, version: str) -> Path:
 
 
 # Hot swap: both model deployments take {"version", "checkpoint", "name" (optional label)}
-# as user_config, and the Viewer takes {"pose_from"}. A Serve config (or `anyscale service
-# deploy --in-place`) that changes only user_config calls reconfigure() on the running
-# replicas, with no restart. Each call runs the model as a fresh subprocess, so the next
-# request already uses the new checkpoint.
+# as user_config (FineTunedLive also takes "legacy"), and the Viewer takes {"pose_from"}.
+# A Serve config (or `anyscale service deploy --in-place`) that changes only user_config
+# calls reconfigure() on the running replicas, with no restart. Each call runs the model as
+# a fresh subprocess, so the next request already uses the new checkpoint.
 #
 # Half an L4 per replica: one Boltz2Live and one FineTunedLive share each GPU (about 5 and
 # 3 GB of its 24 GB). Two replicas of each fit the two L4s the Service is given.
@@ -235,11 +235,14 @@ class FineTunedLive:
 
     def reconfigure(self, cfg: dict):
         """checkpoint: None is the released of3ft (OF3-p2, legacy openfold3). Anything else is
-        an OpenFold3 state dict such as finetune_ray_train.py's of3_ev71_ft.pt."""
+        an OpenFold3 state dict such as finetune_ray_train.py's of3_ev71_ft.pt.
+        legacy: run with the legacy openfold3 (0.4.3), which every OF3-p2 checkpoint needs,
+        such as of3-p2-145k.pt. Default: only for the released of3ft."""
         from aiddd_pipeline import OF3_FT_CKPT
         ckpt = cfg.get("checkpoint")
         self.pred.ckpt_path = ckpt or str(OF3_FT_CKPT)
-        self.pred.binary = "run_openfold" if ckpt else "/opt/of3-legacy/bin/run_openfold"
+        legacy = cfg.get("legacy", ckpt is None)
+        self.pred.binary = "/opt/of3-legacy/bin/run_openfold" if legacy else "run_openfold"
         self.pred.out = live_cache(self.pred, cfg["version"])
         self.model = {"name": cfg.get("name", MODELS["of3ft"]), "version": cfg["version"],
                       "checkpoint": self.pred.ckpt_path}
