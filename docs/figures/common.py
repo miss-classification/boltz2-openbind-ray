@@ -45,13 +45,15 @@ MONO = "Liberation Mono"
 
 # Model identity, fixed order: the 3 benchmark models. Distinct in hue and
 # lightness, so every pair also separates under colour-vision deficiency.
-MODEL_COLORS = {"boltz2": "#2563A6", "openbind0": "#D9922E", "of3ft": "#C8553D"}
-MODEL_NAMES = {"boltz2": "Boltz-2", "openbind0": "OpenBind-0", "of3ft": "OpenFold3 fine-tuned on EV-A71 2A"}
-MODEL_SHORT = {"boltz2": "Boltz-2", "openbind0": "OpenBind-0", "of3ft": "OF3 fine-tuned"}
+MODEL_COLORS = {"boltz2": "#2563A6", "openbind0": "#D9922E", "of3p2": "#7A8796", "of3ft": "#C8553D"}
+MODEL_NAMES = {"boltz2": "Boltz-2", "openbind0": "OpenBind-0", "of3p2": "OpenFold3 145k (general)",
+               "of3ft": "OpenFold3 145k, fine-tuned on EV-A71 2A fragments"}
+MODEL_SHORT = {"boltz2": "Boltz-2", "openbind0": "OpenBind-0", "of3p2": "OF3 145k",
+               "of3ft": "OF3 145k, fine-tuned"}
 # The fine-tuning story: the general OF3-p2 145k model and our Ray Train fine-tune of it.
 # Kept out of MODEL_COLORS, which the benchmark figures iterate over.
 FT_COLORS = {"of3p2": "#7A8796", "of3ray": "#0F8B7A"}
-FT_NAMES = {"of3p2": "OF3-p2 145k (general model)", "of3ray": "Ours: fine-tuned with Ray Train"}
+FT_NAMES = {"of3p2": "OpenFold3 145k (general)", "of3ray": "Fine-tuned with Ray Train"}
 CRYSTAL = "#22272E"
 GOOD = "#1E8A5A"
 BAD = "#C8553D"
@@ -92,10 +94,30 @@ def panel_label(ax, letter, x=-0.02, y=1.02):
 # ---------------------------------------------------------------------------
 # Results
 # ---------------------------------------------------------------------------
+def _latest_ours():
+    """The newest benchmarked Ray Train run (results_ft-p2-*), ignoring smoke tests."""
+    runs = sorted((p for p in SHARED.glob("results_ft-p2-*") if not any(w in p.name for w in ("smoke", "test"))),
+                  key=lambda p: p.stat().st_mtime)
+    return runs[-1] if runs else None
+
+
 def load_results(target_key):
-    """Scored binding events on the curated set (same filter as scripts/compare_targets.py)."""
+    """Scored binding events on the curated set (same filter as scripts/compare_targets.py).
+
+    The benchmark folder holds boltz2, openbind0 and of3ft. The general 145k model and our own
+    fine-tunes are scored into their own folders, so they are merged on here by complex."""
     path = SHARED / "results" / target_key
     df = pd.concat([pd.read_parquet(f) for f in sorted(path.glob("*.parquet"))], ignore_index=True)
+    ours = _latest_ours()
+    for folder, key in ((SHARED / "results_base-of3p2" / target_key, "of3p2"),
+                        ((ours / target_key) if ours else None, "of3ray")):
+        files = sorted(folder.glob("*.parquet")) if folder and folder.exists() else []
+        if not files:
+            continue
+        extra = pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
+        cols = ["complex_name"] + [c for c in extra.columns if c.startswith(f"{key}_")]
+        if len(cols) > 1:
+            df = df.drop(columns=[c for c in cols[1:] if c in df]).merge(extra[cols], on="complex_name", how="left")
     meta = pd.read_csv(TARGETS[target_key].path("metadata"))
     keep = meta.pb_valid_ref.astype(bool) & ~meta.suspected_artefact.astype(bool)
     return df[df.complex_name.isin(set(meta.loc[keep, "complex_name"]))]

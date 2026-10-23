@@ -63,7 +63,7 @@ The repository accompanies a hands-on workshop at the AI Drug Discovery & Develo
   ρ = 0.41 to 0.86, depending on the target.
 
 All numbers are measured in this pipeline, with 1 predicted pose per compound. The OpenBind paper reports
-different values for the same models (for example 145k at 12% on EV-A71 2A follow-ons, where we measure 36%),
+different values for the same models (for example 145k at 12% on all EV-A71 2A follow-ons, where we measure 36%),
 because it selects the top-ranked of 25 poses and uses a different MSA and alignment. Compare numbers within
 1 source only.
 
@@ -187,41 +187,48 @@ Each binding event belongs to the fragment screen or to the early or late follow
 
 All values use the curated set and 1 sampled pose per ligand.
 
-| Model | EV-A71 2A fragments | EV-A71 2A follow-ons | SARS-CoV-2 fragments | SARS-CoV-2 follow-ons |
+| Model | EV-A71 2A fragments | EV-A71 2A late follow-ons | SARS-CoV-2 late follow-ons | MERS-CoV late follow-ons |
 |---|---|---|---|---|
-| Boltz-2 | 21.6% | 3.2% | 37.5% | 87% |
-| OpenBind-0† | 28.4% | 92.7% | 17.5% | 89% |
-| OpenFold3 145k (general) | 8.1% | 36.0% | 25.0% | 84% |
-| OpenFold3 145k, fine-tuned by the OpenBind team | 81.1%* | 78.9% | 7.5% | 62% |
+| Boltz-2 | 21.6% | 1.0% | 91.7% | 90.7% |
+| OpenBind-0† | 28.4% | 91.4% | 90.9% | 90.1% |
+| OpenFold3 145k (general) | 8.1% | 23.9% | 87.7% | 73.5% |
+| OpenFold3 145k, fine-tuned by the OpenBind team | 81.1%* | 78.1% | 56.5% | 66.4% |
 | OpenFold3 145k, fine-tuned with Ray Train (ours) | [pending]* | [pending] | [pending] | [pending] |
 
-<sub>*Measured on the model's own training data. All other values are on compounds the model has not seen.
-†From the consortium that produced the EV-A71 2A data; likely trained on related structures.</sub>
+<sub>Late follow-on compounds: the last design cycles of each campaign, and the hardest stage for every model.
+Early follow-ons and the combined figure are in the [pose accuracy figure](#results) and in
+`scripts/compare_targets.py`. *Measured on the model's own training data. All other values are on compounds
+the model has not seen. †From the consortium that produced the EV-A71 2A data; likely trained on related
+structures.</sub>
 
-![Pose accuracy by target and campaign stage](docs/images/pose_accuracy.png)
+<img src="docs/images/pose_accuracy.png" alt="Pose accuracy by target and campaign stage" width="860">
 
 How to read the figure:
 
 - **Panels a and b** show the share of poses within each error threshold. Curves that rise earlier are
   better. The dashed line marks the 2 Å cutoff.
 - **Panels c and d** show the 2 Å success rate for each campaign stage.
+- **Grey is OpenFold3 145k**, the general model Step 6 fine-tunes. Red is the same model after the
+  OpenBind team fine-tuned it on EV-A71 2A fragments: the 2 lines are the before and after of 1 experiment.
+- The fine-tuned model is shown on EV-A71 2A only, the target it was trained for. Its accuracy on a protease
+  it never saw is a different question, in [Fine-tuning from a general model](#fine-tuning-from-a-general-model).
 
 ### Fine-tuning from a general model
 
-The practical question for a new project: the target is in no one's training set. We start from the general
-OpenFold3 145k model, fine-tune it on the EV-A71 2A fragment screen with Ray Train, and score it on every
-follow-on compound, none of which it sees in training.
+A new project begins with a target that appears in no training set. The experiment below starts from the
+general OpenFold3 145k model, fine-tunes it on the EV-A71 2A fragment screen with Ray Train, and scores it
+on every follow-on compound, none of which appears in training.
 
-| Late follow-ons, % within 2 Å | SARS-CoV-2 Mpro | EV-A71 2A |
-|---|---|---|
-| OpenFold3 145k, before | 87.7% | 23.9% |
-| Fine-tuned with Ray Train, 66 fragments, 8 L4 × 1,000 steps | [pending] | [pending] |
-| Fine-tuned with Ray Train, paper recipe: 80 fragments, 32 diffusion samples | [pending] | [pending] |
-| Fine-tuned by the OpenBind team (released) | 56.5% | 78.1% |
+| Late follow-ons, % within 2 Å | SARS-CoV-2 Mpro | MERS-CoV Mpro | EV-A71 2A |
+|---|---|---|---|
+| OpenFold3 145k, before | 87.7% | 73.5% | 23.9% |
+| Fine-tuned with Ray Train, 66 fragments, 8 L4 × 1,000 steps | [pending] | [pending] | [pending] |
+| Fine-tuned with Ray Train, paper recipe: 80 fragments, 32 diffusion samples | [pending] | [pending] | [pending] |
+| Fine-tuned by the OpenBind team (released) | 56.5% | 66.4% | 78.1% |
 
 ![Before and after fine-tuning](docs/images/before_after_accuracy.gif)
 
-**From an OpenFold3 launch to Ray Train.** OpenFold3's own training stack (configuration, data module, losses,
+**From a standard OpenFold3 launch to Ray Train.** OpenFold3's own training stack (configuration, data module, losses,
 per-sample gradient clipping, EMA, Lightning loop) runs unchanged inside each Ray Train worker. Only the launcher
 changes:
 
@@ -230,7 +237,7 @@ changes:
 | `run_openfold train --runner_yaml finetune.yml` on 1 node | `TorchTrainer(train_loop_per_worker, scaling_config=ScalingConfig(num_workers=8, use_gpu=True))` |
 | More nodes: a SLURM script, `torchrun` on every node, ranks and restarts handled by hand | Ray starts 1 worker per GPU, forms the process group and restarts failed workers |
 
-**Why Ray Train on Anyscale, from our runs**
+**Why Ray Train on Anyscale, with evidence from these runs**
 
 | | Evidence |
 |---|---|
@@ -239,6 +246,8 @@ changes:
 | **Fault tolerance, so spot capacity works** | A spot node was reclaimed at step 700. Ray Train restarted the workers automatically; with a checkpoint every 100 steps the run resumes where it stopped |
 | **Any GPU, any zone** | The same script ran on L4 and L40S, across availability zones, on spot and on-demand capacity |
 | **Older software stacks** | 145k loads only in OpenFold3 0.4.3; Ray runs the workers in that environment with `runtime_env={"py_executable": ...}` |
+
+<img src="docs/images/train_recovery.png" alt="8 GPU workers losing a node and resuming from the last checkpoint" width="860">
 
 ![Restart from 0 vs resume from a checkpoint](docs/images/fault_tolerance.gif)
 
@@ -253,7 +262,7 @@ changes:
 On SARS-CoV-2 Mpro, the predictions form a weaker and a stronger cluster, and part of the high
 correlation comes from separating the two. Within each cluster, ρ is 0.65 and 0.38.
 
-![Boltz-2 predicted affinity against measured affinity](docs/images/affinity.png)
+<img src="docs/images/affinity.png" alt="Predicted against measured affinity" width="820">
 
 ### Case study: 1 chemical series
 
@@ -344,36 +353,36 @@ results feed the Ray Serve application described above.
 
 ### Throughput with shared GPUs
 
-1 L4 GPU, EV-A71 2A, 8 ligands per batch:
+1 L4 GPU, EV-A71 2A, 8 ligands per batch, from the sweep in `scripts/pack_sweep.py`:
 
-| Predictors per L4 | GPU activity | Seconds per ligand | GPU memory |
-|---|---|---|---|
-| OpenFold3, 1 | 32% | 19.9 | 2.9 GB |
-| OpenFold3, 2 | 76% | 11.0 | 7.8 GB |
-| OpenFold3, 3 | 82% | 9.5 | 10.1 GB |
-| Boltz-2, 1 | 75% | 40.8 | 4.8 GB |
-| Boltz-2, 2 | 83% | 43.3 | 9.1 GB |
+| Predictors per L4 | 8 vCPU per node | 16 vCPU per node |
+|---|---|---|
+| OpenFold3, 1 | 23.8 s per ligand, 34% GPU | 23.1 s, 36% |
+| OpenFold3, 2 | 20.2 s, 55% | **14.0 s, 75%** |
+| OpenFold3, 3 | 20.7 s, 54% | 14.0 s, 75% |
+| OpenFold3, 4 | 19.5 s, 55% | 14.1 s, 75% |
+| Boltz-2, 1 | 39.2 s, 43% | 40.0 s, 43% |
+| Boltz-2, 2 | 29.5 s, 69% | **28.0 s, 74%** |
 
-- OpenFold3 runs twice as fast with 2 or more predictors per GPU.
-- On a 16-vCPU node (g6.4xlarge) the same L4 runs OpenFold3 1.44 times faster than on an 8-vCPU node:
-  featurization is CPU-bound. With 64 GB per node and 2 predictors per GPU, OpenFold3 145k made 402 new
-  predictions in 18 minutes on 12 L4 GPUs at 80% GPU utilization.
-- Boltz-2 gains little, because its affinity step already keeps the GPU 98% busy. 2 predictors per GPU
-  remain the default, since they fill the idle time during startup.
+- **2 predictors per GPU is the decisive setting.** A 3rd and 4th change nothing while costing GPU memory.
+- **OpenFold3 gains only when the node has enough CPU**: 1.44 times faster on 16 vCPU than on 8, because it
+  featurizes on the CPU while the GPU waits. Boltz-2 is not CPU-starved, so it gains about the same either way.
+- With 64 GB per node and 2 predictors per GPU, OpenFold3 145k made 402 new predictions in 19 minutes on
+  12 L4 GPUs at 80% GPU utilization.
 
-![Throughput on 1 L4 with several predictors per GPU](docs/images/throughput.png)
+<img src="docs/images/throughput.png" alt="Throughput against predictors per GPU and vCPUs per node" width="820">
 
 ### GPU utilization by pipeline layout
 
-MERS-CoV Mpro, 8 L4 GPUs:
+MERS-CoV Mpro. The first 2 rows are earlier layouts on 8 L4 GPUs; the figure below is the default layout on 4:
 
 | Pipeline layout | GPU utilization |
 |---|---|
 | 1 predictor per GPU, models chained | About 60% across the cluster |
 | Shared GPUs, models chained | 0% on the 4 Boltz-2 nodes, 43 to 92% on the others |
-| Shared GPUs, 1 pipeline per model (default) | 93% on average once all nodes were running |
+| Shared GPUs, 1 pipeline per model (default) | 96% on average once all nodes were running |
 
-![GPU utilization per node across the run](docs/images/gpu_cluster.png)
+<img src="docs/images/gpu_cluster.png" alt="GPU utilization per node across a run" width="820">
 
 ### Additional observations
 

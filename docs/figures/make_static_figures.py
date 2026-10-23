@@ -8,6 +8,8 @@ throughput.png, gpu_cluster.png
 
 import json
 
+import os
+from pathlib import Path
 import numpy as np
 import pandas as pd
 from matplotlib.patches import FancyBboxPatch, Rectangle
@@ -30,8 +32,9 @@ def save(fig, name):
 
 
 def model_legend(fig, y=0.965, x=0.07, short=False):
+    step = 0.9 / max(1, len(MODEL_COLORS))     # fits however many models are plotted
     for k, m in enumerate(MODEL_COLORS):
-        xk = x + k * 0.22
+        xk = x + k * step
         fig.patches.append(Rectangle((xk, y - 0.012), 0.012, 0.024, color=MODEL_COLORS[m], lw=0,
                                      transform=fig.transFigure, figure=fig))
         fig.text(xk + 0.018, y, (MODEL_SHORT if short else MODEL_NAMES)[m], fontsize=8.5, color=INK, va="center")
@@ -63,7 +66,7 @@ def workflow():
 
 # ---------------------------------------------------------------------------
 def architecture():
-    lanes = [("boltz2", 4, 2, "pose + affinity"), ("openbind0", 2, 3, "pose"), ("of3ft", 2, 2, "pose")]
+    lanes = [("boltz2", 4, 2, "pose + affinity"), ("openbind0", 2, 3, "pose"), ("of3p2", 2, 2, "pose")]
     fig = plt.figure(figsize=(7.2, 3.1))
     ax = fig.add_axes([0, 0, 1, 1])
     ax.set_xlim(0, 100), ax.set_ylim(0, 45), ax.axis("off")
@@ -101,16 +104,26 @@ def architecture():
 
 
 # ---------------------------------------------------------------------------
+# Models fine-tuned on 1 target are plotted on that target only: their score on another
+# protein is a different claim (specialization), and side by side it reads as "fine-tuning
+# made the model worse". That comparison lives in the text instead.
+TARGET_SPECIFIC = {"of3ft": "ev71-2a", "of3ray": "ev71-2a"}
+
+
+def models_for(tkey):
+    return [m for m in MODEL_COLORS if TARGET_SPECIFIC.get(m, tkey) == tkey]
+
+
 def pose_accuracy():
     data = {t: load_results(t) for t in TARGET_NAMES}
-    fig, axes = plt.subplots(2, 2, figsize=(7.2, 5.8), gridspec_kw=dict(height_ratios=[1, 1.05]))
-    fig.subplots_adjust(left=0.09, right=0.985, top=0.89, bottom=0.135, hspace=0.6, wspace=0.22)
-    model_legend(fig)
+    fig, axes = plt.subplots(2, 2, figsize=(7.2, 4.9), gridspec_kw=dict(height_ratios=[1, 0.95]))
+    fig.subplots_adjust(left=0.085, right=0.99, top=0.88, bottom=0.20, hspace=0.46, wspace=0.2)
+    model_legend(fig, short=True)
     grid = np.logspace(np.log10(0.1), np.log10(30), 300)
     for col, (tkey, df) in enumerate(data.items()):
         # (a, b) cumulative success rate vs RMSD threshold
         ax = axes[0, col]
-        for m in MODEL_COLORS:
+        for m in models_for(tkey):
             r = df[f"{m}_lig_rmsd"].dropna().to_numpy()
             ax.plot(grid, [(r < g).mean() * 100 for g in grid], color=MODEL_COLORS[m], lw=1.6)
         ax.axvline(2, color=INK2, lw=0.7, ls=(0, (3, 2)))
@@ -126,13 +139,15 @@ def pose_accuracy():
         # (c, d) success rate by campaign stage
         ax = axes[1, col]
         gx = np.arange(3)
-        bw = 0.25
-        for k, m in enumerate(MODEL_COLORS):
+        shown = models_for(tkey)
+        n = len(shown)
+        bw = 0.74 / n                      # the whole group spans 0.74 of the slot
+        for k, m in enumerate(shown):
             v = [100 * (df[df.stage == s][f"{m}_lig_rmsd"] < 2).mean() for s in STAGES]
-            xs = gx + (k - 1) * (bw + 0.02)
-            ax.bar(xs, v, bw, color=MODEL_COLORS[m], lw=0, zorder=3)
+            xs = gx + (k - (n - 1) / 2) * bw
+            ax.bar(xs, v, bw * 0.88, color=MODEL_COLORS[m], lw=0, zorder=3)
             for xx, vv in zip(xs, v):
-                ax.text(xx, vv + 1.5, f"{vv:.0f}", ha="center", va="bottom", fontsize=6.6, color=INK2)
+                ax.text(xx, vv + 1.5, f"{vv:.0f}", ha="center", va="bottom", fontsize=6.2, color=INK2)
         ns = [int((df.stage == s).sum()) for s in STAGES]
         ax.set_xticks(gx, [f"{l}\nn = {n}" for l, n in zip(STAGE_LABELS, ns)], fontsize=7.5)
         ax.tick_params(axis="x", length=0)
@@ -140,8 +155,9 @@ def pose_accuracy():
         ax.set_ylabel("poses within 2 Å (%)" if col == 0 else "")
         ax.grid(axis="y", color=RULE, lw=0.5, zorder=0)
         panel_label(ax, "cd"[col], x=-0.1)
-    fig.text(0.09, 0.012, "Curated binding events (valid reference pose, no suspected crystallographic artefact). "
-             "1 sampled pose per ligand.", fontsize=6.8, color=MUTED)
+    fig.text(0.085, 0.072, "Curated binding events (valid reference pose, no suspected crystallographic artefact). "
+             "1 sampled pose per ligand.\nThe fine-tuned model was trained on EV-A71 2A fragments, so it is shown "
+             "on that target only.", fontsize=6.8, color=MUTED, va="top", linespacing=1.6)
     save(fig, "pose_accuracy.png")
 
 
@@ -204,35 +220,56 @@ def finetune():
 
 # ---------------------------------------------------------------------------
 def throughput():
-    # Measured on one L4, EV-A71 2A, 8 ligands per batch (README table).
-    rows = [("openbind0", 1, 19.9, 32), ("openbind0", 2, 11.0, 76), ("openbind0", 3, 9.5, 82),
-            ("boltz2", 1, 40.8, 75), ("boltz2", 2, 43.3, 83)]
-    fig, ax = plt.subplots(figsize=(7.2, 2.7))
-    fig.subplots_adjust(left=0.2, right=0.86, top=0.88, bottom=0.2)
-    ys = [5.4, 4.4, 3.4, 1.6, 0.6]
-    for (m, per, spl, util), y in zip(rows, ys):
-        v = 3600 / spl
-        ax.barh(y, v, 0.72, color=MODEL_COLORS[m], lw=0, zorder=3)
-        ax.text(v + 6, y, f"{v:.0f} per hour", va="center", fontsize=8, color=INK)
-        ax.text(1.04, y, f"{util}%", transform=ax.get_yaxis_transform(), va="center", fontsize=8, color=INK2)
-    ax.text(1.04, 6.2, "GPU busy", transform=ax.get_yaxis_transform(), va="center", fontsize=7.5, color=MUTED)
-    ax.set_yticks(ys, ["OpenFold3, 1 per GPU", "OpenFold3, 2 per GPU", "OpenFold3, 3 per GPU",
-                       "Boltz-2, 1 per GPU", "Boltz-2, 2 per GPU"])
-    ax.tick_params(axis="y", length=0)
-    ax.set_xlim(0, 480), ax.set_ylim(0, 6.6)
-    ax.set_xlabel("ligands per hour on 1 L4 GPU")
-    ax.grid(axis="x", color=RULE, lw=0.5, zorder=0)
-    ax.spines["left"].set_visible(False)
-    fig.text(0.2, 0.95, "Throughput when several predictors share 1 GPU", fontsize=9.5, fontweight="bold")
-    fig.text(0.2, 0.02, "EV-A71 2A protease, batches of 8 ligands. OpenFold3 runs with the OpenBind-0 weights.",
-             fontsize=6.6, color=MUTED)
+    """Predictors per GPU and vCPUs per node, from the sweep of 2026-10-22.
+
+    $AIDDD_SHARED/workshop/pack/{cpu8-20261022-085733,cpu16-20261022-085429}/summary.json:
+    1 L4, EV-A71 2A, batches of 8. Each point is 64 ligands for OpenFold3, 24 for Boltz-2.
+    """
+    sec = {
+        ("OpenFold3", 8): {1: 23.8, 2: 20.2, 3: 20.7, 4: 19.5},
+        ("OpenFold3", 16): {1: 23.1, 2: 14.0, 3: 14.0, 4: 14.1},
+        ("Boltz-2", 8): {1: 39.2, 2: 29.5},
+        ("Boltz-2", 16): {1: 40.0, 2: 28.0},
+    }
+    cpu_color = {8: "#9FB0BC", 16: MODEL_COLORS["boltz2"]}
+    fig, axes = plt.subplots(1, 2, figsize=(6.8, 3.0), gridspec_kw=dict(width_ratios=[1.35, 1]))
+    fig.subplots_adjust(left=0.1, right=0.985, top=0.76, bottom=0.31, wspace=0.26)
+    for ax, model in zip(axes, ("OpenFold3", "Boltz-2")):
+        per = sorted(sec[(model, 16)])
+        x = np.arange(len(per))
+        for k, cpus in enumerate((8, 16)):
+            v = [3600 / sec[(model, cpus)][n] for n in per]
+            ax.bar(x + (k - 0.5) * 0.38, v, 0.34, color=cpu_color[cpus], lw=0, zorder=3,
+                   label=f"{cpus} vCPU per node")
+            for xx, vv in zip(x + (k - 0.5) * 0.38, v):
+                ax.text(xx, vv + 6, f"{vv:.0f}", ha="center", va="bottom", fontsize=6.4, color=INK2)
+        ax.set_xticks(x, [str(n) for n in per])
+        ax.set_xlabel("predictors sharing 1 L4 GPU")
+        ax.set_ylim(0, 300)
+        ax.set_ylabel("ligands per hour" if model == "OpenFold3" else "")
+        ax.set_title(model, pad=6)
+        ax.grid(axis="y", color=RULE, lw=0.5, zorder=0)
+    axes[0].legend(frameon=False, fontsize=7.5, loc="upper left", handlelength=1.1, borderpad=0.2)
+    fig.text(0.1, 0.93, "2 predictors per GPU, on a node with enough CPU", fontsize=9.5, fontweight="bold")
+    fig.text(0.1, 0.18, "1 L4, EV-A71 2A, batches of 8 ligands. OpenFold3 gains only when the node has 16 vCPU, "
+             "because it\nfeaturizes on CPU; past 2 predictors nothing changes. Boltz-2 gains from the 2nd "
+             "predictor either way.", fontsize=6.4, color=MUTED, va="top", linespacing=1.5)
     save(fig, "throughput.png")
 
 
 # ---------------------------------------------------------------------------
+GPU_LOGS = os.environ.get("AIDDD_GPU_LOGS", str(SHARED / "results_base-of3p2" / "mers-mpro_gpu"))
+# What the run was, for the figure title. Set AIDDD_GPU_LABEL when pointing GPU_LOGS elsewhere.
+GPU_LOGS_LABEL = os.environ.get("AIDDD_GPU_LABEL", "MERS-CoV Mpro benchmark")
+
+
 def gpu_cluster():
     import matplotlib.colors as mcolors
-    files = sorted((SHARED / "results" / "mers-mpro_gpu").glob("*.csv"))
+    # Per-node samples written beside the results by aiddd_pipeline.py. GPU_LOGS picks the run.
+    files = sorted(Path(GPU_LOGS).glob("*.csv"))
+    if not files:
+        print(f"no GPU samples under {GPU_LOGS}: keeping the existing gpu_cluster.png")
+        return
     logs = [pd.read_csv(f, names=["t", "util", "mem"]) for f in files]
     t0 = min(l.t.min() for l in logs)
     logs.sort(key=lambda l: l.t.min())
@@ -246,7 +283,7 @@ def gpu_cluster():
     first_down = min(l.t.max() for l in logs)
     steady = pd.concat([l[(l.t >= all_up) & (l.t <= first_down)] for l in logs]).util.mean()
     overall = pd.concat(logs).util.mean()
-    fig, ax = plt.subplots(figsize=(7.2, 2.9))
+    fig, ax = plt.subplots(figsize=(6.6, 2.5))
     fig.subplots_adjust(left=0.09, right=0.9, top=0.8, bottom=0.25)
     cmap = mcolors.LinearSegmentedColormap.from_list("u", ["#f1efeb", "#9fb6cf", MODEL_COLORS["boltz2"], "#0f2f52"])
     cmap.set_bad(BG)
@@ -259,16 +296,16 @@ def gpu_cluster():
         s.set_visible(False)
     for x in [(all_up - t0) / 60, (first_down - t0) / 60]:
         ax.axvline(x, color=INK, lw=0.7, ls=(0, (3, 2)))
-    ax.text((all_up - t0) / 60 + 0.5, -0.9, "all 8 GPUs up", fontsize=7, color=INK2, va="bottom")
+    ax.text((all_up - t0) / 60 + 0.5, -0.9, f"all {len(logs)} GPUs up", fontsize=7, color=INK2, va="bottom")
     ax.text((first_down - t0) / 60 - 0.5, -0.9, "first GPU released", fontsize=7, color=INK2, va="bottom", ha="right")
     cax = fig.add_axes([0.92, 0.25, 0.015, 0.55])
     cb = fig.colorbar(im, cax=cax, ticks=[0, 50, 100])
     cb.outline.set_visible(False)
     cb.ax.tick_params(labelsize=7, length=2)
     cb.ax.set_title("GPU %", fontsize=7, color=INK2, pad=4)
-    fig.text(0.09, 0.95, "GPU utilization per node, MERS-CoV Mpro benchmark (8 L4 GPUs)", fontsize=9.5,
+    fig.text(0.085, 0.95, f"GPU utilization per node, {GPU_LOGS_LABEL} ({len(logs)} L4 GPUs)", fontsize=9.5,
              fontweight="bold")
-    fig.text(0.09, 0.02, f"1-minute means of nvidia-smi samples taken every 5 s. Mean while all 8 GPUs were up: "
+    fig.text(0.085, 0.02, f"1-minute means of nvidia-smi samples taken every 5 s. Mean while all {len(logs)} GPUs were up: "
              f"{steady:.0f}%; over the whole run: {overall:.0f}%.\nEach node is released once its model has no work "
              f"left, so the cluster shrinks as the run finishes.", fontsize=6.6, color=MUTED, linespacing=1.5)
     save(fig, "gpu_cluster.png")
