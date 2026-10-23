@@ -48,6 +48,8 @@ OF3_LEGACY = "/opt/of3-legacy/bin/run_openfold"       # OF3-p2 weights only load
 OF3_FT_CKPT = OF3_CACHE / "of3p2-ft-ev2a.ckpt"
 OF3_FT_URL = ("https://openfold3-data.s3.amazonaws.com/openfold3-parameters/"
               "openbind/of3p2-ft-ev2a.ckpt")
+OF3_P2_CKPT = OF3_CACHE / "of3-p2-145k.pt"   # OF3-p2, the starting weights of of3ft
+OF3_P2_URL = "https://openfold3-data.s3.amazonaws.com/openfold3-parameters/of3-p2-145k.pt"
 PRED_ROOT = SHARED / "predictions"
 OLD_SHARED = "/mnt/user_storage/aiddd"   # the data root before the move to shared storage
 

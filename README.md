@@ -510,7 +510,7 @@ All data is stored under `/mnt/shared_storage/aiddd`, which every Workspace, Job
   raw/OpenBind_EV-A71_2A/      structures, metadata CSV, FASTA, MSA        (500 MB)
   EV-A71_2A_benchmark/         published OpenBind results                  (11 MB)
   boltz_cache/                 Boltz-2 weights and chemical component data (6 GB)
-  of3_cache/                   OpenBind-0 and fine-tuned OF3 checkpoints   (9 GB)
+  of3_cache/                   OpenBind-0, OF3-p2 and fine-tuned OF3 ckpts (11 GB)
 ```
 
 - The script skips anything already downloaded and is safe to rerun.

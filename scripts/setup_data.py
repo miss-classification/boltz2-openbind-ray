@@ -34,6 +34,7 @@ OF3_BASE = "https://openfold3-data.s3.amazonaws.com/openfold3-parameters/"
 OF3_CKPTS = {
     "of3-ob-2025-06-30-174k.pt": OF3_BASE + "of3-ob-2025-06-30-174k.pt",      # OpenBind-0
     "of3p2-ft-ev2a.ckpt": OF3_BASE + "openbind/of3p2-ft-ev2a.ckpt",           # fine-tuned on EV-A71 2A
+    "of3-p2-145k.pt": OF3_BASE + "of3-p2-145k.pt",                            # its starting weights
 }
 
 
@@ -89,7 +90,7 @@ def setup_of3():
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--skip-of3", action="store_true", help="skip the two OpenFold3 checkpoints (about 9 GB)")
+    ap.add_argument("--skip-of3", action="store_true", help="skip the three OpenFold3 checkpoints (about 11 GB)")
     args = ap.parse_args()
 
     print(f"Shared data directory: {SHARED}")
