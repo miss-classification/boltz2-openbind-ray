@@ -22,6 +22,7 @@ only predicts what is missing.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -397,6 +398,45 @@ def _attach(batch, rows, key, metric_cols, seconds, n_predicted):
     out[f"{key}_batch_seconds"] = float(seconds)
     out[f"{key}_batch_predicted"] = int(n_predicted)
     return out
+
+
+def run_openfold_pose(ckpt_path, smiles, target="ev71-2a",
+                      binary="/opt/of3-legacy/bin/run_openfold", out_dir=None):
+    """Predict one ligand's pose in the target protein with OpenFold3, via the
+    `run_openfold predict` CLI. Returns the path to the predicted structure (CIF).
+    Repeated (checkpoint, SMILES) calls return the cached file. Used by the serving
+    notebook; the batch benchmark uses OF3Predictor."""
+    t = TARGETS[target]
+    os.environ.setdefault("OPENFOLD_CACHE", str(OF3_CACHE))
+    out = Path(out_dir or t.pred_root / "live")
+    out.mkdir(parents=True, exist_ok=True)
+    dest = out / (hashlib.sha1(f"{ckpt_path}|{smiles}".encode()).hexdigest()[:16] + ".cif")
+    if dest.exists():
+        return str(dest)
+
+    msa = t.pred_root / "msa_of3" / "cfdb_uniref30.a3m"
+    if not msa.exists():
+        msa.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(t.path("msa"), msa)
+    work = Path(tempfile.mkdtemp(prefix="pose_"))
+    query = {"seeds": [42], "queries": {"q": {"chains": [
+        {"molecule_type": "protein", "chain_ids": ["A"],
+         "sequence": read_first_sequence(t.path("fasta")), "main_msa_file_paths": [str(msa)]},
+        {"molecule_type": "ligand", "chain_ids": ["B"], "smiles": smiles}],
+        "use_paired_msas": False}}}
+    (work / "query.json").write_text(json.dumps(query))
+    (work / "runner.yml").write_text("data_module_args:\n  num_workers: 2\n")
+    subprocess.run(
+        [binary, "predict", "--query_json", str(work / "query.json"),
+         "--runner_yaml", str(work / "runner.yml"), "--output_dir", str(work / "out"),
+         "--use_msa_server", "False", "--use_templates", "False",
+         "--num_diffusion_samples", "1", "--num_model_seeds", "1",
+         "--inference_ckpt_path", str(ckpt_path)],
+        check=True, env={**os.environ, "TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD": "1"})
+    cif = next((work / "out" / "q").glob("seed_*/q_seed_*_sample_*_model.cif"))
+    dest.write_text(cif.read_text())
+    shutil.rmtree(work, ignore_errors=True)
+    return str(dest)
 
 
 # ---------------------------------------------------------------------------
