@@ -9,10 +9,10 @@ the top, click a complex to see the predicted pose (green) over the X-ray
 ligand (orange). Uses 3Dmol.js from a CDN in the browser.
 
 Live prediction: paste a SMILES at the top. Three model deployments, each on half an L4:
-  HouseModel      pose, from the general OpenFold3 model that every program uses
+  BaseModel      pose, from the general OpenFold3 model that every program uses
   EV71Specialist  pose, from OpenFold3 fine-tuned for the EV-A71 2A program
   Boltz2Live      binding affinity (OpenFold3 does not predict affinity), and its own pose
-HouseModel and EV71Specialist are one class, OF3Live, with different checkpoints. The
+BaseModel and EV71Specialist are one class, OF3Live, with different checkpoints. The
 Viewer's user_config "pose_from" picks which deployment's pose the page shows, and a
 /predict request can name another one. If the molecule has a crystal structure, the page
 also draws the crystal ligand and reports the live pose's RMSD to it. All models reuse the
@@ -227,7 +227,7 @@ class Boltz2Live:
                                       "target_ongoing_requests": 1},
                   user_config={"version": "base", "checkpoint": None})
 class OF3Live:
-    """Pose from one OpenFold3 checkpoint. build_app() deploys it twice: as the house model
+    """Pose from one OpenFold3 checkpoint. build_app() deploys it twice: as the base model
     and as the EV-A71 2A specialist. Both share one cache root: a version name always means
     the same weights."""
 
@@ -259,11 +259,11 @@ class OF3Live:
                   user_config={"pose_from": "EV71Specialist"})
 @serve.ingress(api)
 class Viewer:
-    def __init__(self, live: DeploymentHandle, house: DeploymentHandle = None,
+    def __init__(self, live: DeploymentHandle, base: DeploymentHandle = None,
                  specialist: DeploymentHandle = None):
         self.live = live   # Boltz-2: affinity
         # OpenFold3 pose deployments by name. "Boltz2Live" takes the pose from Boltz-2.
-        self.poses = {name: h for name, h in (("HouseModel", house), ("EV71Specialist", specialist)) if h}
+        self.poses = {name: h for name, h in (("BaseModel", base), ("EV71Specialist", specialist)) if h}
         # File by file: a column that is all null in one file and numeric in another
         # will not merge as one Parquet dataset.
         self.df = relocate_paths(pd.concat([pd.read_parquet(f) for f in sorted(RESULTS.glob("*.parquet"))],
@@ -276,7 +276,7 @@ class Viewer:
                 self.known.setdefault(c, r)
 
     def reconfigure(self, cfg: dict):
-        """pose_from: "HouseModel", "EV71Specialist" or "Boltz2Live", the deployment whose pose
+        """pose_from: "BaseModel", "EV71Specialist" or "Boltz2Live", the deployment whose pose
         /predict returns. A request can name another one."""
         self.pose_from = cfg["pose_from"]
 
@@ -359,9 +359,9 @@ class Viewer:
         return PlainTextResponse("no ground truth", status_code=404)
 
 
-# Starting checkpoints. The house model is a general model that never saw EV-A71 2A; the
+# Starting checkpoints. The base model is a general model that never saw EV-A71 2A; the
 # specialist is the public fine-tune of it on the EV-A71 2A fragment screen.
-HOUSE = {"version": "p2-145k", "name": "House model: OF3-p2 145k",
+BASE = {"version": "p2-145k", "name": "Base model: OF3-p2 145k",
          "checkpoint": str(OF3_P2_CKPT), "legacy": True}
 SPECIALIST = {"version": "ev71-v2", "name": "EV-A71 specialist v2: public fine-tune (8 GPUs, 1,000 steps)",
               "checkpoint": str(OF3_FT_CKPT), "legacy": True}
@@ -370,13 +370,13 @@ SPECIALIST = {"version": "ev71-v2", "name": "EV-A71 specialist v2: public fine-t
 def build_app(accelerator: str = "L4"):
     """The Viewer composed with the model deployments, on the given GPU type. Two L4s give four
     half-GPU slots: up to two for Boltz-2 (every request needs its affinity), one for the
-    house model and one for the specialist."""
+    base model and one for the specialist."""
     gpu = {"num_gpus": 0.5, "accelerator_type": accelerator}
     one = {"min_replicas": 1, "max_replicas": 1, "target_ongoing_requests": 1}
     return Viewer.bind(
         Boltz2Live.options(ray_actor_options=gpu).bind(),
-        OF3Live.options(name="HouseModel", ray_actor_options=gpu, autoscaling_config=one,
-                        user_config=HOUSE).bind(),
+        OF3Live.options(name="BaseModel", ray_actor_options=gpu, autoscaling_config=one,
+                        user_config=BASE).bind(),
         OF3Live.options(name="EV71Specialist", ray_actor_options=gpu, autoscaling_config=one,
                         user_config=SPECIALIST).bind())
 

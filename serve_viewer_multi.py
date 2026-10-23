@@ -1,4 +1,4 @@
-"""Multiplexed Serve app: one GPU serves a house model and many program specialists.
+"""Multiplexed Serve app: one GPU serves a base model and many program specialists.
 
 Separate from serve_viewer.py (the hot-swap dry-run app) on purpose. Same models and
 scoring, different serving pattern:
@@ -9,7 +9,7 @@ scoring, different serving pattern:
                max_num_models_per_replica loaded and evicts the least-used.
 
 A request names a model by id ("model") or by program ("program", resolved through a
-routing table). The house model is just one id in the pool, the default route. Adding a
+routing table). The base model is just one id in the pool, the default route. Adding a
 new specialist version is a registry entry, not a swap: old versions stay reachable by id
 for canary, rollback and audit. Every response carries the exact version that answered.
 
@@ -41,20 +41,20 @@ from serve_viewer import Boltz2Live, canonical, predict_one
 SHARED = Path(os.environ.get("AIDDD_SHARED", "/mnt/shared_storage/aiddd"))
 RESULTS = Path(os.environ.get("AIDDD_RESULTS", SHARED / "results" / "ev71-2a"))
 
-# The model registry: id -> weights and inference settings. "house" is the general model;
+# The model registry: id -> weights and inference settings. "base" is the general model;
 # specialists are fine-tunes. A version is (checkpoint + samples), so "more diffusion
 # samples" is a real, different version of the same weights. reconfigure() replaces this
 # whole table in place, so the notebook adds or removes versions with no restart.
 DEFAULT_MODELS = {
-    "house":   {"name": "House model: OF3-p2 145k", "checkpoint": str(OF3_P2_CKPT),
+    "base":   {"name": "Base model: OF3-p2 145k", "checkpoint": str(OF3_P2_CKPT),
                 "legacy": True, "samples": 1},
     "ev71-v2": {"name": "EV-A71 specialist v2: public fine-tune", "checkpoint": str(OF3_FT_CKPT),
                 "legacy": True, "samples": 1},
 }
 # program -> the model id its chemists get now. Promotion = repoint a route.
-DEFAULT_ROUTES = {"default": "house", "ev71-2a": "ev71-v2"}
+DEFAULT_ROUTES = {"default": "base", "ev71-2a": "ev71-v2"}
 
-# How many checkpoints one replica keeps loaded. House plus a couple of specialist versions
+# How many checkpoints one replica keeps loaded. Base plus a couple of specialist versions
 # fit; a further id evicts the least-used. Small enough to show eviction in the demo.
 MAX_RESIDENT = 3
 
