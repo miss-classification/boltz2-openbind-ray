@@ -7,7 +7,7 @@
     python docs/figures/make_before_after_gifs.py --only accuracy --ours 65.0
 
 docs/images/before_after_pose.gif      x7056a: OF3-p2 145k pose, then the fine-tuned pose
-docs/images/before_after_accuracy.gif  same model, new target; fine-tuning closes the gap
+docs/images/before_after_accuracy.gif  same model, new target; what fine-tuning recovers
 docs/images/fault_tolerance.gif        spot node reclaimed at step ~700, with and without checkpoints
 
 Accuracy values are measured in this repository's pipeline (curated late follow-ons,
@@ -64,10 +64,10 @@ def rmsd_row(bar, y, color, label, value, alpha=1.0):
 
 
 # ---------------------------------------------------------------------------
-# 1. Pose: x7056a, a late follow-on with no close fragment
+# 1. Pose: 1 late follow-on with no close fragment (--ligand)
 # ---------------------------------------------------------------------------
 def pose_gif(a):
-    xtal = load_crystal("ev71-2a", "x7056a", "A71EV2A-x7056a")
+    xtal = load_crystal("ev71-2a", a.ligand, f"A71EV2A-{a.ligand}")
     before = load_prediction_in_crystal_frame(a.before_cif, xtal)
     after = load_prediction_in_crystal_frame(a.after_cif, xtal)
     morph = before["el"] == after["el"]          # same atom order: move each atom to its new place
@@ -76,7 +76,7 @@ def pose_gif(a):
     pocket = xtal["lig"].mean(0)
     R0 = rot_x(-12) @ view_matrix(ca, pocket)
     span = 15.0
-    header = "EV-A71 2A protease · late follow-on x7056a (pKD 6.1) · never seen in training"
+    header = f"EV-A71 2A protease · late follow-on {a.ligand}{a.pkd} · never seen in training"
     frames, durs = [], []
 
     def frame(t_rot, draw, title, body, rows):
@@ -108,7 +108,7 @@ def pose_gif(a):
     n = 18
     for i in range(n):
         frame(i / 60, lambda ax, R, i=i: crystal(ax, R, alpha=ease(i / 8)),
-              "The answer key", "The crystal structure shows where x7056a binds in the pocket.", [])
+              "The answer key", f"The crystal structure shows where {a.ligand} binds in the pocket.", [])
         durs.append(110)
     durs[-1] = 2600
 
@@ -154,7 +154,7 @@ def pose_gif(a):
             crystal(ax, R)
             draw_ligand(ax, after["lig"], after["bonds"], R, pocket, AFTER, alpha=0.9)
         frame((72 + i) / 60, draw, "After fine-tuning",
-              "Dark: crystal. Teal: prediction. The 2 overlap almost atom for atom.",
+              "Dark: crystal. Teal: prediction. The compound now sits in the right place,\nin the right orientation.",
               [(BEFORE, "OF3-p2 145k", a.before_rmsd, 1.0), (AFTER, a.after_label, a.after_rmsd, 1.0)])
         durs.append(110)
     durs[-1] = 4500
@@ -163,7 +163,7 @@ def pose_gif(a):
 
 
 # ---------------------------------------------------------------------------
-# 2. Accuracy: same model, new target; fine-tuning closes the gap
+# 2. Accuracy: same model, new target; what fine-tuning recovers
 # ---------------------------------------------------------------------------
 def accuracy_gif(a):
     sars = [("Boltz-2", 91.7, BOLTZ), ("OF3-p2 145k", 87.7, BEFORE)]
@@ -173,7 +173,7 @@ def accuracy_gif(a):
                "correctly.", 1, 0),
               ("Same model, new target: 88% → 24%", "On EV-A71 2A the general OpenFold3 model drops to 24%, "
                "and Boltz-2 to 1%.", 1, 2),
-              ("Fine-tuning closes the gap", f"The same model, fine-tuned on {frag_phrase(a)} of the new "
+              ("Fine-tuning on the fragment screen", f"The same model, fine-tuned on {frag_phrase(a)} of the new "
                "protein.", 1, 4)]
     frames, durs = [], []
     for s, (title, body, n_sars, n_ev) in enumerate(scenes):
@@ -287,6 +287,8 @@ def fault_gif(a):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--only", choices=["pose", "accuracy", "fault"], default=None)
+    ap.add_argument("--ligand", default="x7056a", help="EV-A71 2A ligand id for the pose GIF")
+    ap.add_argument("--pkd", default=" (pKD 6.1)", help="shown after the ligand id; empty string to omit")
     ap.add_argument("--before-cif", default="/mnt/shared_storage/aiddd/predictions_base-of3p2/1022-2240/of3p2/x7056a.cif")
     ap.add_argument("--before-rmsd", type=float, default=6.01)
     ap.add_argument("--after-cif", default="/mnt/shared_storage/aiddd/predictions/of3ft/x7056a.cif",

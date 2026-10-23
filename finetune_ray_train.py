@@ -50,7 +50,7 @@ BASES = {
     "p2": (SHARED / "of3_cache" / "of3-p2-145k.pt", LEGACY_PY),          # start of the OpenBind paper's fine-tune
 }
 # Short tags for the run name, by training set directory (scripts/prepare_finetune.py)
-DATA_TAGS = {"ev71-2a": "evfrag", "ev71-2a-frag80": "evfrag80", "ev71-2a+sars2-mpro-fragment": "evsarsfrag",
+DATA_TAGS = {"ev71-2a": "evfrag", "ev71-2a-frag80": "evfrag80", "ev71-2a-frag-early": "evfragearly", "ev71-2a+sars2-mpro-fragment": "evsarsfrag",
              "ev71-2a+sars2-mpro-fragment+early": "evsarsearly"}
 
 
