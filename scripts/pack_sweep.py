@@ -5,8 +5,8 @@ ligands and one GPU, and prints seconds per ligand and GPU utilization for each.
 Run it twice, on an 8-vCPU and a 16-vCPU GPU worker, to separate the effect of
 packing from the effect of the CPU available to feed it:
 
-  anyscale job submit -f job_pack.yaml --name pack8
-  anyscale job submit -f job_pack.yaml --name pack16  # after editing the group to g6.4xlarge
+  anyscale job submit -f jobs/job.yaml --name pack8
+  anyscale job submit -f jobs/job.yaml --name pack16  # after editing the group to g6.4xlarge
 
 Each setting writes to its own --pred-dir, so nothing comes from the cache and
 every run does the same work.

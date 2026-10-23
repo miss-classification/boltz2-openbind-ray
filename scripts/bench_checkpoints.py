@@ -52,7 +52,7 @@ def main():
     ap.add_argument("--targets", default=",".join(TARGETS))
     ap.add_argument("--max-gpus", type=int, default=8,
                     help="per job. Several jobs run at once, so keep this well under the quota")
-    ap.add_argument("--job-file", default="job_bench.yaml")
+    ap.add_argument("--job-file", default="jobs/job.yaml")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -80,7 +80,7 @@ def main():
         cmd = ["anyscale", "job", "submit", "-f", args.job_file, "--name", name, "--",
                "python", "aiddd_pipeline.py", "--target", target, "--models", "of3ray",
                "--max-gpus", str(args.max_gpus), "--of3ray-ckpt", str(ckpt),
-               "--of3-per-gpu", "2", "--cpus-per-gpu-node", "16",   # g6.4xlarge, job_bench.yaml
+               "--of3-per-gpu", "2", "--cpus-per-gpu-node", "16",   # g6.4xlarge, jobs/job.yaml
                "--pred-dir", str(preds), "--out", str(out)]
         if run.startswith("ft-p2-"):
             cmd.append("--of3ray-legacy")

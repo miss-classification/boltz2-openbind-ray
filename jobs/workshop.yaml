@@ -1,7 +1,7 @@
 # Anyscale Job: the workshop's headline run. Boltz-2 and OpenBind-0 on the same
 # ligands, side by side, inside a 20-minute slot.
 #
-#   anyscale job submit -f job_workshop.yaml --name workshop
+#   anyscale job submit -f jobs/workshop.yaml --name workshop
 #
 # Every setting here comes from the packing sweep of 2026-10-22 (pack8b, pack16b,
 # scripts/pack_sweep.py) and the 308-ligand run of 2026-10-20 (live16-test).
@@ -41,7 +41,7 @@
 name: aiddd-workshop
 image_uri: anyscale/image/aiddd-boltz2-of3:4
 working_dir: .
-excludes: [image, docs, .git, __pycache__, "*.ipynb"]
+excludes: [image, docs, slides, .git, __pycache__, "*.ipynb"]
 env_vars:
   AIDDD_SHARED: /mnt/user_storage/aiddd
 compute_config:

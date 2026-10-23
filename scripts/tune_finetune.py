@@ -1,8 +1,8 @@
 """
 Tune the OpenFold3 fine-tune with Ray Tune: which learning rate gives the best poses?
 
-    python tune_finetune.py                                   # 4 learning rates, 1 GPU each, about 35 min
-    python tune_finetune.py --lrs 1e-5,3e-5,1e-4,3e-4,1e-3 --max-steps 300 --workers-per-trial 2
+    python scripts/tune_finetune.py                                   # 4 learning rates, 1 GPU each, about 35 min
+    python scripts/tune_finetune.py --lrs 1e-5,3e-5,1e-4,3e-4,1e-3 --max-steps 300 --workers-per-trial 2
 
 Each Tune trial is one complete Ray Train run (finetune_ray_train.py) with its own
 learning rate. Trials run side by side, each on its own GPU nodes:
@@ -35,6 +35,9 @@ from ray.tune.integration.ray_train import TuneReportCallback
 from ray.tune.schedulers import ASHAScheduler
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
+import sys
+from pathlib import Path as _Path
+sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))   # the repository root
 import finetune_ray_train as ft
 
 SHARED = Path(os.environ.get("AIDDD_SHARED", "/mnt/user_storage/aiddd"))

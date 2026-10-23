@@ -389,31 +389,29 @@ MERS-CoV Mpro, 8 L4 GPUs:
 ```
 .
 ├── workshop.ipynb              Hands-on workshop notebook (90 minutes)
-├── workshop_helpers.py         Plotting, 3D viewer and data-loading helpers for the notebook
-├── aiddd_pipeline.py           Ray Data benchmark pipeline: validate, predict, score (one target per run)
+├── workshop_helpers.py         Plotting, 3D viewer and data loading for the notebook
+│
+├── aiddd_pipeline.py           Ray Data benchmark pipeline: validate, predict, score
 ├── finetune_ray_train.py       Ray Train fine-tuning of OpenFold3 (TorchTrainer, Lightning DDP)
-├── tune_finetune.py            Ray Tune learning-rate search over complete Ray Train runs
-├── tune_boltz.py               Ray Tune search over Boltz-2 inference settings
 ├── serve_viewer.py             Ray Serve application: results viewer and live prediction
-├── AGENTS.md                   Working notes for the next person or agent: runs, numbers, open items
-├── job.yaml                    Anyscale Job definition with autoscaling L4 and CPU worker groups
-├── job_bench.yaml              Benchmark 1 checkpoint on 1 target (g6.4xlarge, 64 GB per node)
-├── job_ft.yaml                 Fine-tuning cluster: L4, A10G and L40S pools, spot preferred
-├── job_live.yaml               The workshop's live run: every EV-A71 2A late follow-on on 12 L4 GPUs
-├── job_workshop.yaml           Boltz-2 and OpenBind-0 side by side on 20 pinned L4 GPUs
-├── slides/project/             Talk slides (1 HTML file per slide)
-├── service.yaml                Anyscale Service definition for sharing the viewer
+│
+├── jobs/
+│   ├── job.yaml                Everyday Anyscale Job: benchmarks, fine-tuning, sweeps
+│   ├── workshop.yaml           The workshop's live run on pinned GPU nodes
+│   └── service.yaml            Anyscale Service for sharing the viewer
 ├── configs/
 │   └── finetune_ev71.yml       OpenFold3 training settings used by the fine-tune
 ├── scripts/
-│   ├── setup_data.py           One-time download of data, published benchmark and model weights
+│   ├── setup_data.py           One-time download of data, published benchmark and weights
 │   ├── prepare_mpro.py         One-time build of the SARS-CoV-2 and MERS-CoV Mpro targets
-│   ├── prepare_finetune.py     Builds the OpenFold3 training set from the EV-A71 2A fragment screen
+│   ├── prepare_finetune.py     Builds the OpenFold3 training set from a fragment screen
+│   ├── bench_checkpoints.py    Benchmarks every fine-tuned checkpoint on every target
 │   ├── compare_targets.py      Summary table across targets, models and campaign stages
-│   ├── bench_checkpoints.py    Benchmark every fine-tuned checkpoint on every target, 1 job each
 │   ├── pack_sweep.py           Predictors per GPU and vCPUs per node: throughput sweep
+│   ├── tune_finetune.py        Ray Tune learning-rate search over complete Ray Train runs
+│   ├── tune_boltz.py           Ray Tune search over Boltz-2 inference settings
 │   └── check_serve.py          End-to-end check of the Serve application
-├── image/Containerfile         Container image: Ray 2.59, Boltz-2, OpenFold3
+├── image/Containerfile         Container image: Ray 2.59, Boltz-2, OpenFold3 0.5 and 0.4.3
 └── docs/
     ├── images/                 Figures and animations used in this README and the notebook
     └── figures/                Scripts that redraw every figure from the benchmark results
@@ -430,7 +428,9 @@ the study:
 python scripts/setup_data.py                            # 15 to 20 min, once
 python aiddd_pipeline.py --limit 8 --max-gpus 2 \
   --out /mnt/user_storage/aiddd/results/smoke           # 15 min, checks that everything works
-anyscale job submit -f job.yaml --name aiddd-ev71       # 1 to 2 h, full benchmark
+anyscale job submit -f jobs/job.yaml --name aiddd-ev71 -- \
+  python aiddd_pipeline.py --target ev71-2a --models boltz2,openbind0 --max-gpus 8 \
+    --out /mnt/user_storage/aiddd/results/ev71-2a       # 1 to 2 h, full benchmark
 serve run serve_viewer:app                              # viewer and live prediction
 ```
 
@@ -456,7 +456,7 @@ in Section 7 holds a GPU until the final cell stops it.
 
 ## Runbook
 
-Times refer to the cluster defined in `job.yaml`.
+Times refer to the cluster defined in `jobs/job.yaml`.
 
 | Step | Task | Time |
 |---|---|---|
@@ -478,7 +478,7 @@ Times refer to the cluster defined in `job.yaml`.
 | Worker group | `g6.xlarge` or `g6.2xlarge` (1 L4 GPU), minimum 0, maximum 4 |
 
 Clone this repository into the Workspace. To build the image yourself, run the command below, then set
-`image_uri` in `job.yaml` and `service.yaml` to the version it prints:
+`image_uri` in `jobs/job.yaml` and `jobs/service.yaml` to the version it prints:
 
 ```bash
 anyscale image build -f image/Containerfile -n aiddd-boltz2-of3 -r 2.59.0
@@ -491,7 +491,7 @@ anyscale image build -f image/Containerfile -n aiddd-boltz2-of3 -r 2.59.0
 ### Step 2. Download data and weights
 
 ```bash
-anyscale job submit -f job.yaml --name aiddd-setup -- python scripts/setup_data.py
+anyscale job submit -f jobs/job.yaml --name aiddd-setup -- python scripts/setup_data.py
 ```
 
 All data is stored under `/mnt/user_storage/aiddd`, which Workspaces and Jobs can both read:
@@ -510,7 +510,7 @@ All data is stored under `/mnt/user_storage/aiddd`, which Workspaces and Jobs ca
 ### Step 2b. Build the Mpro targets
 
 ```bash
-anyscale job submit -f job.yaml --name aiddd-mpro-setup -- python scripts/prepare_mpro.py
+anyscale job submit -f jobs/job.yaml --name aiddd-mpro-setup -- python scripts/prepare_mpro.py
 ```
 
 The script:
@@ -525,7 +525,7 @@ The script:
 Run 8 ligands (2 fragments and 6 follow-ons) through all 3 models:
 
 ```bash
-anyscale job submit -f job.yaml --name aiddd-smoke -- \
+anyscale job submit -f jobs/job.yaml --name aiddd-smoke -- \
   python aiddd_pipeline.py --models boltz2,openbind0,of3ft \
     --limit 8 --max-gpus 2 --out /mnt/user_storage/aiddd/results/smoke
 ```
@@ -545,17 +545,19 @@ Done in N min. 10 complexes scored -> /mnt/user_storage/aiddd/results/smoke
 ### Step 4. Full benchmark
 
 ```bash
-anyscale job submit -f job.yaml --name aiddd-ev71        # EV-A71 2A, the job.yaml default
-anyscale job submit -f job.yaml --name aiddd-sars2 -- \
+anyscale job submit -f jobs/job.yaml --name aiddd-ev71 -- \
+  python aiddd_pipeline.py --target ev71-2a --models boltz2,openbind0,of3ft --max-gpus 8 \
+    --out /mnt/user_storage/aiddd/results/ev71-2a
+anyscale job submit -f jobs/job.yaml --name aiddd-sars2 -- \
   python aiddd_pipeline.py --target sars2-mpro --models boltz2,openbind0,of3ft --max-gpus 8
-anyscale job submit -f job.yaml --name aiddd-mers -- \
+anyscale job submit -f jobs/job.yaml --name aiddd-mers -- \
   python aiddd_pipeline.py --target mers-mpro --models boltz2,openbind0,of3ft --max-gpus 8
 ```
 
-To score the general OpenFold3 145k model, use `job_bench.yaml` and always give it its own results folder:
+To score the general OpenFold3 145k model, use `jobs/job.yaml` and always give it its own results folder:
 
 ```bash
-anyscale job submit -f job_bench.yaml --name base-of3p2-ev71-2a -- \
+anyscale job submit -f jobs/job.yaml --name base-of3p2-ev71-2a -- \
   python aiddd_pipeline.py --target ev71-2a --models of3p2 --max-gpus 12 --of3-per-gpu 2 \
     --cpus-per-gpu-node 16 --out /mnt/user_storage/aiddd/results_base-of3p2/ev71-2a
 ```
@@ -582,7 +584,7 @@ into a new tab instead of clicking a link to it.
 **As an Anyscale Service, to share with a room:**
 
 ```bash
-anyscale service deploy -f service.yaml          # prints a public URL to share
+anyscale service deploy -f jobs/service.yaml          # prints a public URL to share
 anyscale service terminate -n aiddd-viewer       # after the session
 ```
 
@@ -609,7 +611,7 @@ python scripts/prepare_finetune.py --paper-set \
 **Train from OpenFold3 145k** (8 L4 GPUs, about 2.3 hours):
 
 ```bash
-anyscale job submit -f job_ft.yaml --name ft-p2-evfrag -- \
+anyscale job submit -f jobs/job.yaml --name ft-p2-evfrag -- \
   python finetune_ray_train.py --base p2 --num-workers 8 --max-steps 1000 --checkpoint-every 100
 ```
 
@@ -643,20 +645,20 @@ step  104  loss   0.232  avg10   0.149  distogram  1.392  lr 1.0e-04    6.9 s  1
 python scripts/bench_checkpoints.py --runs <run name> --targets ev71-2a,sars2-mpro,mers-mpro
 ```
 
-This submits 1 job per target (`job_bench.yaml`, 8 L4 GPUs each) with its own results folder
+This submits 1 job per target (`jobs/job.yaml`, 8 L4 GPUs each) with its own results folder
 (`results_<run>/<target>`) and a fresh prediction folder, so poses from another checkpoint are never reused.
 Runs named `ft-p2-*` are predicted with OpenFold3 0.4.3 (`--of3ray-legacy`).
 
 ### Step 7. Searches with Ray Tune
 
 ```bash
-anyscale job submit -f job.yaml --name tune-ft    -- python tune_finetune.py   # about 35 min on 4 L4 GPUs
-anyscale job submit -f job.yaml --name tune-boltz -- python tune_boltz.py      # about 60 min on 8 L4 GPUs
+anyscale job submit -f jobs/job.yaml --name tune-ft    -- python scripts/tune_finetune.py   # about 35 min on 4 L4 GPUs
+anyscale job submit -f jobs/job.yaml --name tune-boltz -- python scripts/tune_boltz.py      # about 60 min on 8 L4 GPUs
 ```
 
-- **`tune_finetune.py`** runs each learning rate as a complete Ray Train trial. The ASHA scheduler stops
+- **`scripts/tune_finetune.py`** runs each learning rate as a complete Ray Train trial. The ASHA scheduler stops
   weak trials early, and the best weights are tested on held-out early follow-on complexes.
-- **`tune_boltz.py`** tests combinations of recycling steps, diffusion samples and physics-based steering
+- **`scripts/tune_boltz.py`** tests combinations of recycling steps, diffusion samples and physics-based steering
   for Boltz-2, with 1 L4 GPU per trial.
 
 ---
@@ -710,7 +712,7 @@ anyscale job submit -f job.yaml --name tune-boltz -- python tune_boltz.py      #
 | CUDA out of memory in an OpenFold3 stage | Lower `--batch-size`, or add an L40S group and pass `--of3-accelerator L40S` |
 | Viewer shows `not scored yet` | `AIDDD_RESULTS` points to a run that does not include that model |
 | Live prediction never returns | No L4 GPU is available to the Workspace. Add an L4 worker group |
-| Raylet killed repeatedly, nodes cycling, GPU use near 40% | Host memory exhausted by OpenFold3 0.4.3 predictors on 32 GB nodes. Use `job_bench.yaml` (g6.4xlarge, 64 GB) and `--of3-per-gpu 2` |
+| Raylet killed repeatedly, nodes cycling, GPU use near 40% | Host memory exhausted by OpenFold3 0.4.3 predictors on 32 GB nodes. Use `jobs/job.yaml` (g6.4xlarge, 64 GB) and `--of3-per-gpu 2` |
 | `Missing key(s) in state_dict: "model.version_tensor"` when training from 145k | 145k predates that buffer. `--base p2` already loads it non-strictly |
 | `unexpected keyword argument 'fallback_conformer_source'` | A training set built with OpenFold3 0.5 read by 0.4.3. `--base p2` writes a compatible `training_cache_of3v04.json` |
 | Learning rate stuck at 9.5e-5 after step 200 in a 145k run | OpenFold3 0.4.3 drops `decay_every_n_steps`. Fixed in `finetune_ray_train.py`; rerun runs started before 2026-10-23 01:00 |
