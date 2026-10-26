@@ -253,7 +253,14 @@ def show_aligned(pose_pdb, parent, label="new molecule (live)", height=420):
 
 
 def _cif_to_pdb(cif_text):
-    """mmCIF text to PDB text (3Dmol draws ribbons more reliably from PDB)."""
+    """mmCIF text to PDB text (3Dmol draws ribbons more reliably from PDB).
+
+    The Service answers with PDB text in its `cif` field (`"format": "pdb"`), so accept
+    either: an mmCIF file must open with a `data_` directive, and anything else is already
+    PDB and goes through untouched.
+    """
+    if not cif_text.lstrip().startswith("data_"):
+        return cif_text
     import io
     import tempfile
     from Bio.PDB import PDBIO

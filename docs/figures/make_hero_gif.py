@@ -263,6 +263,8 @@ def grid_layout(g, rows):
 def scene_scale(n=40):
     import matplotlib.colors as mcolors
     names = {"ev71-2a": "EV-A71 2A protease", "sars2-mpro": "SARS-CoV-2 main protease"}
+    # 3 rows is what this scene's layout fits (a 4th overflows the 540 px frame). The loops below
+    # walk these keys, not MODEL_COLORS, so adding a model to the palette cannot break this scene.
     labels = {"boltz2": "Boltz-2", "openbind0": "OpenBind-0", "of3ft": "OpenFold3, fine-tuned\non EV-A71 2A"}
     rows, cpx, pw = 15, 5, int(W * DPI)
     ph = int(H * DPI)
@@ -283,7 +285,7 @@ def scene_scale(n=40):
             bar.text(x_px[tkey] / pw, 1 - (top_px - 8) / ph, names[tkey], fontsize=10.5, fontweight="bold",
                      color=INK, va="bottom")
         done = t >= 0.999
-        for r_, m in enumerate(MODEL_COLORS):
+        for r_, m in enumerate(labels):
             yc = 1 - (top_px + r_ * row_px + rows * cpx / 2) / ph
             bar.text(0.045, yc, labels[m], fontsize=10, color=INK, fontweight="bold", va="center", linespacing=1.2)
             for tkey, g in grids.items():
@@ -300,7 +302,7 @@ def scene_scale(n=40):
                 bar.text(x + 0.004, yb - drop, lab, fontsize=8.5, color=MUTED, va="top")
         img = fig_to_image(fig, DPI)
         px = img.load()
-        for r_, m in enumerate(MODEL_COLORS):
+        for r_, m in enumerate(labels):
             col = tuple(int(255 * v) for v in mcolors.to_rgb(MODEL_COLORS[m]))
             for tkey, g in grids.items():
                 pos = lay[tkey][0]
@@ -323,8 +325,7 @@ def scene_workflow(n=30):
              ("Serve", "Ray Serve", "Pose and affinity\nfor a new molecule,\n3D viewer")]
     for i in range(n):
         fig, bar = new_frame(5, caption=False)
-        bar.text(0.045, 0.94, "What you build in this workshop", fontsize=18, fontweight="bold", color=INK, va="top")
-        bar.text(0.045, 0.855, "A reproducible pipeline, from public crystal data to a model you can query live.",
+        bar.text(0.045, 0.94, "A reproducible pipeline, from public crystal data to a model you can query live.",
                  fontsize=12, color=INK2, va="top")
         lit = min(len(boxes), int(i / 4) + 1)
         bw, gap, x = 0.165, 0.0262, 0.045
