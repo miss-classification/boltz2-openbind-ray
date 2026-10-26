@@ -320,12 +320,14 @@ on the left includes a plain-language reading of the result.</sub>
 
 - **Leaderboard.** Every crystal complex, sorted by ligand RMSD, with a tab for each model.
 - **3D comparison.** Selecting a row shows the predicted ligand (green) on the crystal ligand (orange).
-- **Live prediction.** Paste a SMILES string to get a predicted pose, confidence and affinity from
-  Boltz-2 on an L4 GPU, with an explanation of what the numbers mean. A new molecule takes 1 to 3
-  minutes; repeated molecules return instantly from a cache.
+- **Live prediction.** Paste a SMILES string to get a predicted pose from OpenFold3 (the base model or
+  a fine-tuned specialist, chosen by the current demo step) and an affinity from Boltz-2, each on its
+  own L4 GPU, with an explanation of what the numbers mean. A new molecule takes 1 to 2 minutes;
+  repeated molecules return from a cache in under a second.
 - **Built-in guide.** A "How to read this page" panel explains RMSD, pKD, campaign stages and the live
   prediction metrics.
-- **Scales with demand.** The Boltz-2 deployment adds GPU replicas as traffic grows, from 1 to 4.
+- **Scales with demand.** The CPU front end scales from 2 to 4 replicas as traffic grows; each GPU model
+  runs on its own L4 node.
 
 See [Step 5](#step-5-viewer-and-live-prediction) to run it in a Workspace or share it as an Anyscale
 Service.

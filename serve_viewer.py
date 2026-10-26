@@ -283,8 +283,9 @@ class Boltz2Live:
         return {**out, "model": self.model, "zone": self.zone}
 
 
-# How many model ids one OF3Pool replica keeps loaded. Each holds about 1.5 GB of host memory
-# (the weights move to the GPU per request). 3 keeps every demo model loaded, so a room that mixes
+# How many model ids one OF3Pool replica keeps loaded. Each loaded model adds about 3 GB to the
+# replica's host memory (measured on the Service: 8.5, 11.5 and 14.6 GB with 1, 2 and 3 loaded; the
+# weights move to the GPU per request). 3 keeps every demo model loaded, so a room that mixes
 # ids never waits on a reload. A further id evicts the least recently used one: Ray Serve calls
 # its __del__, which frees it. Notebook 03's own pool keeps 2, to show an eviction.
 MAX_RESIDENT = 3
