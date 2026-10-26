@@ -15,7 +15,7 @@ from pathlib import Path
 import pandas as pd
 from IPython.display import HTML, display
 
-from aiddd_pipeline import SHARED, STAGES, TARGETS, pose_in_crystal_frame
+from aiddd_pipeline import SHARED, STAGES, TARGETS, pose_in_crystal_frame, relocate_paths
 
 USER = os.environ.get("ANYSCALE_USERNAME") or os.environ.get("USER") or "attendee"
 MINE = SHARED / "workshop" / USER          # everything this attendee writes goes here
@@ -214,15 +214,39 @@ def show_complex(row, models=("boltz2", "openbind0"), height=420):
     _viewer(shown, legend=title + "<br>" + "".join(chips), height=height, zoom="ligands")
 
 
+def show_live_overlay(row, poses, height=420):
+    """Several live poses of one molecule over its crystal, one color each, like show_complex.
+    poses: [(label, pose_pdb, color, rmsd or None)], each pose already moved onto the crystal
+    (the Service's /predict answer: "cif" with "format": "pdb")."""
+    ref_pdb = Path(row["ref_pdb"])
+    ref_sdf = ref_pdb.with_name(ref_pdb.name.replace("_complex_ref.pdb", "_ligand_ref.sdf"))
+    shown = [{"text": ref_pdb.read_text(), "fmt": "pdb",
+              "styles": [({}, {"cartoon": {"color": "#d6d3ce", "opacity": 0.55}}),
+                         ({"byres": True, "within": {"distance": 5, "sel": {"resn": "LIG"}}, "not": {"resn": "LIG"}},
+                          {"line": {"color": "#9a958c"}})]},
+             {"text": ref_sdf.read_text(), "fmt": "sdf", "styles": [({}, _stick(COLORS["crystal"]))]}]
+    chips = [_chip(COLORS["crystal"], "crystal structure")]
+    for label, pdb, color, rmsd in poses:
+        shown.append({"text": pdb, "fmt": "pdb", "styles": [({"chain": "B"}, _stick(color))]})
+        chips.append(_chip(color, label + ("" if rmsd is None else f"  {rmsd:.1f} Å {'✓' if rmsd < 2 else '✗'}")))
+    _viewer(shown, legend=f"<b>{row['complex_name']}</b><br>" + "".join(chips), height=height, zoom="ligands")
+
+
 def show_analog(cif_path, parent, label="new molecule (Boltz-2, live)", height=420):
     """A live prediction for a new molecule, moved onto the crystal of the compound it was
     made from: does the model keep the parent's binding mode?"""
+    show_aligned(pose_in_crystal_frame(str(cif_path), Path(parent["ref_pdb"])), parent, label, height)
+
+
+def show_aligned(pose_pdb, parent, label="new molecule (live)", height=420):
+    """Like show_analog, for a pose already moved onto the crystal (PDB text), such as the
+    `cif` field the Service's /predict returns with "format": "pdb"."""
     ref_pdb = Path(parent["ref_pdb"])
     ref_sdf = ref_pdb.with_name(ref_pdb.name.replace("_complex_ref.pdb", "_ligand_ref.sdf"))
     _viewer([{"text": ref_pdb.read_text(), "fmt": "pdb",
               "styles": [({}, {"cartoon": {"color": "#d6d3ce", "opacity": 0.55}})]},
              {"text": ref_sdf.read_text(), "fmt": "sdf", "styles": [({}, _stick(COLORS["crystal"]))]},
-             {"text": pose_in_crystal_frame(str(cif_path), ref_pdb), "fmt": "pdb",
+             {"text": pose_pdb, "fmt": "pdb",
               "styles": [({"chain": "B"}, _stick("#2e9e4f"))]}],
             legend=_chip(COLORS["crystal"], f"parent {parent['complex_name']} (crystal)") + _chip("#2e9e4f", label),
             height=height, zoom="ligands")
@@ -277,9 +301,10 @@ def load_results(target):
     """Scored binding events from the full benchmark, on the curated set (valid crystal
     reference, no suspected crystallographic artefact), one row per crystal complex.
     Adds the 145k base (of3p2_*) and our fine-tune (of3ray_*) where they have been scored."""
-    df = _parquet(SHARED / "results" / target)
+    df = relocate_paths(_parquet(SHARED / "results" / target))
     for path, key in ((BASE_RESULTS / target, "of3p2"), (SHARED / f"results_{ours_run()}" / target, "of3ray")):
         extra = _parquet(path)
+        extra = relocate_paths(extra) if extra is not None else None
         if extra is not None and f"{key}_lig_rmsd" in extra:
             cols = ["complex_name"] + [c for c in extra.columns if c.startswith(f"{key}_")]
             df = df.drop(columns=[c for c in cols[1:] if c in df]).merge(extra[cols], on="complex_name", how="left")

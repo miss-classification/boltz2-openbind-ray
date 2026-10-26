@@ -289,9 +289,9 @@ if __name__ == "__main__":
     ap.add_argument("--only", choices=["pose", "accuracy", "fault"], default=None)
     ap.add_argument("--ligand", default="x7056a", help="EV-A71 2A ligand id for the pose GIF")
     ap.add_argument("--pkd", default=" (pKD 6.1)", help="shown after the ligand id; empty string to omit")
-    ap.add_argument("--before-cif", default="/mnt/user_storage/aiddd/predictions_base-of3p2/1022-2240/of3p2/x7056a.cif")
+    ap.add_argument("--before-cif", default="/mnt/shared_storage/aiddd/predictions_base-of3p2/1022-2240/of3p2/x7056a.cif")
     ap.add_argument("--before-rmsd", type=float, default=6.01)
-    ap.add_argument("--after-cif", default="/mnt/user_storage/aiddd/predictions/of3ft/x7056a.cif",
+    ap.add_argument("--after-cif", default="/mnt/shared_storage/aiddd/predictions/of3ft/x7056a.cif",
                     help="the fine-tuned pose of x7056a (default: the OpenBind team's released fine-tune)")
     ap.add_argument("--after-rmsd", type=float, default=0.40)
     ap.add_argument("--after-label", default="Fine-tuned")

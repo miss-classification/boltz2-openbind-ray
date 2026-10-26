@@ -301,7 +301,7 @@ The per-complex results are stored as Parquet:
 
 ```python
 import pandas as pd
-df = pd.read_parquet("/mnt/user_storage/aiddd/results/ev71-2a")
+df = pd.read_parquet("/mnt/shared_storage/aiddd/results/ev71-2a")
 df.groupby("stage")[["boltz2_lig_rmsd", "openbind0_lig_rmsd", "of3ft_lig_rmsd"]].median()
 ```
 
@@ -320,12 +320,14 @@ on the left includes a plain-language reading of the result.</sub>
 
 - **Leaderboard.** Every crystal complex, sorted by ligand RMSD, with a tab for each model.
 - **3D comparison.** Selecting a row shows the predicted ligand (green) on the crystal ligand (orange).
-- **Live prediction.** Paste a SMILES string to get a predicted pose, confidence and affinity from
-  Boltz-2 on an L4 GPU, with an explanation of what the numbers mean. A new molecule takes 1 to 3
-  minutes; repeated molecules return instantly from a cache.
+- **Live prediction.** Paste a SMILES string to get a predicted pose from OpenFold3 (the base model or
+  a fine-tuned specialist, chosen by the current demo step) and an affinity from Boltz-2, each on its
+  own L4 GPU, with an explanation of what the numbers mean. A new molecule takes 1 to 2 minutes;
+  repeated molecules return from a cache in under a second.
 - **Built-in guide.** A "How to read this page" panel explains RMSD, pKD, campaign stages and the live
   prediction metrics.
-- **Scales with demand.** The Boltz-2 deployment adds GPU replicas as traffic grows, from 1 to 4.
+- **Scales with demand.** The CPU front end scales from 2 to 4 replicas as traffic grows; each GPU model
+  runs on its own L4 node.
 
 See [Step 5](#step-5-viewer-and-live-prediction) to run it in a Workspace or share it as an Anyscale
 Service.
@@ -425,11 +427,13 @@ MERS-CoV Mpro. The first 2 rows are earlier layouts on 8 L4 GPUs; the figure bel
 ├── aiddd_pipeline.py                   Ray Data benchmark pipeline: validate, predict, score
 ├── finetune_ray_train.py               Ray Train fine-tuning of OpenFold3 (TorchTrainer, Lightning DDP)
 ├── serve_viewer.py                     Ray Serve application: results viewer and live prediction
+├── of3_live.py                         OpenFold3 held in memory, for Ray Serve model multiplexing
 │
 ├── jobs/
 │   ├── job.yaml                        Everyday Anyscale Job: benchmarks, fine-tuning, sweeps
 │   ├── workshop.yaml                   The workshop's live run on pinned GPU nodes
-│   └── service.yaml                    Anyscale Service for sharing the viewer
+│   ├── service.yaml                    Anyscale Service for sharing the viewer
+│   └── demo_{1_base,2_ft,3_next_ft}.yaml  Live demo steps: add a model to the Service, in place
 ├── configs/
 │   └── finetune_ev71.yml               OpenFold3 training settings used by the fine-tune
 ├── scripts/
@@ -441,7 +445,7 @@ MERS-CoV Mpro. The first 2 rows are earlier layouts on 8 L4 GPUs; the figure bel
 │   ├── pack_sweep.py                   Predictors per GPU and vCPUs per node: throughput sweep
 │   ├── tune_finetune.py                Ray Tune learning-rate search over complete Ray Train runs
 │   ├── tune_boltz.py                   Ray Tune search over Boltz-2 inference settings
-│   └── check_serve.py                  End-to-end check of the Serve application
+│   └── check_serve.py                  End-to-end check of the Serve application and multiplexing
 ├── image/Containerfile                 Container image: Ray 2.59, Boltz-2, OpenFold3 0.5 and 0.4.3
 └── docs/
     ├── images/                         Figures and animations used in this README and the notebooks
@@ -458,10 +462,10 @@ the study:
 ```bash
 python scripts/setup_data.py                            # 15 to 20 min, once
 python aiddd_pipeline.py --limit 8 --max-gpus 2 \
-  --out /mnt/user_storage/aiddd/results/smoke           # 15 min, checks that everything works
+  --out /mnt/shared_storage/aiddd/results/smoke           # 15 min, checks that everything works
 anyscale job submit -f jobs/job.yaml --name aiddd-ev71 -- \
   python aiddd_pipeline.py --target ev71-2a --models boltz2,openbind0 --max-gpus 8 \
-    --out /mnt/user_storage/aiddd/results/ev71-2a       # 1 to 2 h, full benchmark
+    --out /mnt/shared_storage/aiddd/results/ev71-2a       # 1 to 2 h, full benchmark
 serve run serve_viewer:app                              # viewer and live prediction
 ```
 
@@ -473,7 +477,7 @@ Both notebook settings live in the Setup cell of each notebook:
 | Setting | Default | Meaning |
 |---|---|---|
 | `USE_GPUS` | `False` | `False` loads stored results for every GPU step. `True` runs them live and starts GPU nodes |
-| `AIDDD_SERVICE_URL` | unset | Environment variable holding the prediction service address for notebook 03. Unset, the notebook starts Ray Serve in the Workspace instead (needs `USE_GPUS = True`) |
+| `AIDDD_SERVICE_URL` | unset | Environment variable holding the address of the shared Anyscale Service (`aiddd-viewer`) for notebook 03. With `USE_GPUS = False`, section 6 sends its predictions there and 6.7 runs the room exercise; unset, those cells print how to set it and skip. With `USE_GPUS = True` (the presenter), section 6 runs its own Ray Serve pool in the Workspace |
 
 ### Workshop format
 
@@ -486,12 +490,18 @@ Complete Steps 2, 2b and 4 before the session. The 90-minute session then runs a
 | 25 to 45 | 01 | Full benchmark: comparison by campaign stage and across targets |
 | 45 to 60 | 01 | 3D viewer and pose overlays |
 | 60 to 80 | 02 | Fine-tuning OpenFold3 145k with Ray Train: a short live run, then the full run trained beforehand |
-| 80 to 90 | 03 | Live prediction with Ray Serve for a molecule suggested by the audience |
+| 80 to 90 | 03 | Ray Serve: the base model and its fine-tunes in one multiplexed pool, a new version added in place, and the whole room on one shared Service |
 
-The Workspace has a limited number of GPUs, so run the cells of each notebook in order. When notebook 03
-starts Ray Serve in the Workspace (`AIDDD_SERVICE_URL` unset and `USE_GPUS = True`), the application holds
-a GPU until the final cell stops it. Pointing `AIDDD_SERVICE_URL` at a deployed Anyscale Service instead
-uses no Workspace GPU at all.
+The Workspace has a limited number of GPUs, so run the cells of each notebook in order. In notebook 03,
+attendees (`USE_GPUS = False`) use no Workspace GPU: their predictions go to the shared Service. Only the
+presenter (`USE_GPUS = True`) starts a Ray Serve pool in the Workspace, which holds a GPU until the final
+cell stops it.
+
+**Getting `AIDDD_SERVICE_URL`.** The presenter shares the Service address at the start of the session:
+`anyscale service status -n aiddd-viewer` prints it as `query_url` (today
+`https://aiddd-viewer-5ms2e.cld-g54aiirwj1s8t9kt.s.anyscaleuserdata.com`). Set it as a Workspace
+environment variable before starting the notebook, or paste it into the Setup cell in place of
+`os.environ.get("AIDDD_SERVICE_URL", "")`. The same address opens the viewer page in a browser.
 
 ---
 
@@ -535,14 +545,14 @@ anyscale image build -f image/Containerfile -n aiddd-boltz2-of3 -r 2.59.0
 anyscale job submit -f jobs/job.yaml --name aiddd-setup -- python scripts/setup_data.py
 ```
 
-All data is stored under `/mnt/user_storage/aiddd`, which Workspaces and Jobs can both read:
+All data is stored under `/mnt/shared_storage/aiddd`, which every Workspace, Job and Service in the Anyscale cloud can read, whoever started it:
 
 ```
-/mnt/user_storage/aiddd/
+/mnt/shared_storage/aiddd/
   raw/OpenBind_EV-A71_2A/      structures, metadata CSV, FASTA, MSA        (500 MB)
   EV-A71_2A_benchmark/         published OpenBind results                  (11 MB)
   boltz_cache/                 Boltz-2 weights and chemical component data (6 GB)
-  of3_cache/                   OpenBind-0 and fine-tuned OF3 checkpoints   (9 GB)
+  of3_cache/                   OpenBind-0, OF3-p2 and fine-tuned OF3 ckpts (11 GB)
 ```
 
 - The script skips anything already downloaded and is safe to rerun.
@@ -568,13 +578,13 @@ Run 8 ligands (2 fragments and 6 follow-ons) through all 3 models:
 ```bash
 anyscale job submit -f jobs/job.yaml --name aiddd-smoke -- \
   python aiddd_pipeline.py --models boltz2,openbind0,of3ft \
-    --limit 8 --max-gpus 2 --out /mnt/user_storage/aiddd/results/smoke
+    --limit 8 --max-gpus 2 --out /mnt/shared_storage/aiddd/results/smoke
 ```
 
 The job log ends with a summary like this:
 
 ```
-Done in N min. 10 complexes scored -> /mnt/user_storage/aiddd/results/smoke
+Done in N min. 10 complexes scored -> /mnt/shared_storage/aiddd/results/smoke
   Boltz-2: {'ok': 8}
   OpenBind-0 (OF3): {'ok': 8}
   OF3 fine-tuned on EV-A71 2A: {'ok': 8}
@@ -588,7 +598,7 @@ Done in N min. 10 complexes scored -> /mnt/user_storage/aiddd/results/smoke
 ```bash
 anyscale job submit -f jobs/job.yaml --name aiddd-ev71 -- \
   python aiddd_pipeline.py --target ev71-2a --models boltz2,openbind0,of3ft --max-gpus 8 \
-    --out /mnt/user_storage/aiddd/results/ev71-2a
+    --out /mnt/shared_storage/aiddd/results/ev71-2a
 anyscale job submit -f jobs/job.yaml --name aiddd-sars2 -- \
   python aiddd_pipeline.py --target sars2-mpro --models boltz2,openbind0,of3ft --max-gpus 8
 anyscale job submit -f jobs/job.yaml --name aiddd-mers -- \
@@ -600,7 +610,7 @@ To score the general OpenFold3 145k model, use `jobs/job.yaml` and always give i
 ```bash
 anyscale job submit -f jobs/job.yaml --name base-of3p2-ev71-2a -- \
   python aiddd_pipeline.py --target ev71-2a --models of3p2 --max-gpus 12 --of3-per-gpu 2 \
-    --cpus-per-gpu-node 16 --out /mnt/user_storage/aiddd/results_base-of3p2/ev71-2a
+    --cpus-per-gpu-node 16 --out /mnt/shared_storage/aiddd/results_base-of3p2/ev71-2a
 ```
 
 - Each job runs on its own cluster, so all 3 targets can run at the same time.
@@ -616,7 +626,7 @@ anyscale job submit -f jobs/job.yaml --name base-of3p2-ev71-2a -- \
 
 ```bash
 python scripts/check_serve.py                                      # end-to-end check
-AIDDD_RESULTS=/mnt/user_storage/aiddd/results/ev71-2a serve run serve_viewer:app
+AIDDD_RESULTS=/mnt/shared_storage/aiddd/results/ev71-2a serve run serve_viewer:app
 ```
 
 Open the Workspace URL with `?port=8000` added. If your browser reports an invalid referer, paste the URL
@@ -641,7 +651,7 @@ anyscale service terminate -n aiddd-viewer       # after the session
 ```bash
 python scripts/prepare_finetune.py --check                                   # 66 curated fragments
 python scripts/prepare_finetune.py --paper-set \
-  --out /mnt/user_storage/aiddd/finetune/ev71-2a-frag80                      # the OpenBind paper's 80
+  --out /mnt/shared_storage/aiddd/finetune/ev71-2a-frag80                      # the OpenBind paper's 80
 ```
 
 - The default set keeps fragment complexes with a PoseBusters-valid reference, no suspected artefact and no
@@ -734,7 +744,7 @@ anyscale job submit -f jobs/job.yaml --name tune-boltz -- python scripts/tune_bo
 
 | Variable | Default | Used by |
 |---|---|---|
-| `AIDDD_SHARED` | `/mnt/user_storage/aiddd` | All scripts: data, weights, predictions and results |
+| `AIDDD_SHARED` | `/mnt/shared_storage/aiddd` | All scripts: data, weights, predictions and results |
 | `AIDDD_RESULTS` | `$AIDDD_SHARED/results/ev71-2a` | `serve_viewer.py` |
 | `AIDDD_OURS_RUN` | newest benchmarked `ft-p2-*` run | `workshop_helpers.py`: which fine-tune the notebook shows as "ours" |
 
@@ -744,7 +754,7 @@ anyscale job submit -f jobs/job.yaml --name tune-boltz -- python scripts/tune_bo
 
 | Symptom | Cause and fix |
 |---|---|
-| `Missing /mnt/user_storage/aiddd/...` | Data is not downloaded. Run Step 2 or Step 2b |
+| `Missing /mnt/shared_storage/aiddd/...` | Data is not downloaded. Run Step 2 or Step 2b |
 | Job stays at `pending=1` actors for several minutes | GPU nodes are starting. The first node usually takes 3 to 6 minutes |
 | `InsufficientInstanceCapacity` | The cloud has no free GPUs of that type. `enable_cross_zone_scaling` tries other zones. If all fail, remove `--of3-accelerator L40S` so every stage uses L4 |
 | Fine-tuning reports that the worker group timed out | Not enough free GPUs. Stop the Serve application from Section 7 (`serve shutdown`) and run the notebook in order |
