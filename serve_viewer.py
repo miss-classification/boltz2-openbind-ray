@@ -72,7 +72,7 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
 <form id="live" onsubmit="predict(event)"><h2>Live prediction</h2>
  <input id="smi" placeholder="SMILES, e.g. CNC(=O)c1nn(C)c2ccccc12" style="width:100%;box-sizing:border-box;padding:5px">
  <button style="margin:6px 0">Predict</button>
- <label id="freshbox" style="display:none;font-size:12px;color:#444" title="Delete this molecule's cached pose first, so the model really runs (about 30 s)">
+ <label id="freshbox" style="display:none;font-size:12px;color:#444" title="Run the model even if this pose is cached: about 25 s with the model in memory, up to 100 s if it must load first">
   <input type="checkbox" id="fresh"> run live, skip the cached pose</label>
  <span id="lstat"></span><div id="lread"></div><div id="hist"></div><div id="pool"></div></form>
 <details><summary>How to read this page</summary><dl>
@@ -134,7 +134,8 @@ async function predict(ev){
   const smi = document.getElementById("smi").value.trim(), st = document.getElementById("lstat");
   if(!smi) return;
   const fresh = document.getElementById("fresh").checked;
-  st.textContent = fresh ? "predicting live on GPU (about 30 s)..." : "predicting (cached poses are instant; new ones about 30 s)...";
+  st.textContent = fresh ? "predicting live on GPU (about 25 s; longer if the model must load)..."
+                          : "predicting (cached poses return at once; a new molecule takes 1 to 2 minutes)...";
   document.getElementById("lread").textContent = "";
   const r = await fetch(u("/predict"), {method:"POST", headers:{"Content-Type":"application/json"},
                                      body: JSON.stringify({smiles: smi, fresh})});

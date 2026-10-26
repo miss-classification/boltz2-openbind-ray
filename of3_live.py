@@ -1,8 +1,9 @@
 """OpenFold3 held in memory: load the weights once, predict many times.
 
 `run_openfold predict` (what OF3Predictor and run_openfold_pose call) starts a process, builds
-the model and reads the checkpoint on every call: 40 to 75 s on an L4, of which the model
-itself is about 17 s. OF3Model does the expensive part once, in __init__, so a Ray Serve
+the model and reads the checkpoint on every call: 40 to 77 s per call on an L4 (measured Oct 25).
+With the weights already loaded, a prediction takes about 25 s, of which the model's forward pass is
+about 17 s. OF3Model does the expensive part once, in __init__, so a Ray Serve
 multiplexed `load()` can return it and every later request for that model id skips it.
 
 OF3-p2 checkpoints only load in OpenFold3 0.4.x, so this module runs in the legacy install:
