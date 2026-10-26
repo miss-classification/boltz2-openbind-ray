@@ -1,0 +1,34 @@
+# Live demo, step 1 of 3. Same Service as jobs/service.yaml; only user_config differs, so
+# --in-place calls reconfigure() on the running replicas: no restart, no new nodes.
+# Not running yet? Deploy jobs/service.yaml first (5 to 10 min), then step 1. Edit no file in
+# this folder between steps: a code change makes the update restart every replica.
+#
+#   anyscale service deploy -f jobs/demo_1_base.yaml --in-place    # reset to the base model
+#   anyscale service deploy -f jobs/demo_2_ft.yaml --in-place      # add the fine-tune
+#   anyscale service deploy -f jobs/demo_3_next_ft.yaml --in-place # swap in the next fine-tune
+#
+# Every request goes to the base model.
+name: aiddd-viewer
+image_uri: anyscale/image/aiddd-boltz2-of3:4
+working_dir: .
+excludes: [image, docs, slides, .git, .bin, __pycache__, "*.ipynb", .ipynb_checkpoints]
+env_vars:
+  AIDDD_SHARED: /mnt/shared_storage/aiddd
+query_auth_token_enabled: false
+compute_config:
+  head_node:
+    instance_type: m5.2xlarge
+  worker_nodes:
+    - name: l4
+      instance_type: g6.2xlarge
+      min_nodes: 2
+      max_nodes: 2
+  enable_cross_zone_scaling: true
+applications:
+  - import_path: serve_viewer:app
+    deployments:
+      - name: BaseModel
+        user_config: {version: p2-145k, name: "Base model: OF3-p2 145k", legacy: true,
+                      checkpoint: /mnt/shared_storage/aiddd/of3_cache/of3-p2-145k.pt}
+      - name: Viewer
+        user_config: {pose_from: BaseModel}

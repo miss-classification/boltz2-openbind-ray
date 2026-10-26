@@ -5,6 +5,7 @@
 #   anyscale service terminate -n aiddd-viewer        # after the session
 #
 # Same app as `serve run serve_viewer:app` in a Workspace (README step 6).
+# Live demo: base model -> fine-tune -> next fine-tune, in place: jobs/demo_*.yaml.
 name: aiddd-viewer
 image_uri: anyscale/image/aiddd-boltz2-of3:4
 working_dir: .
