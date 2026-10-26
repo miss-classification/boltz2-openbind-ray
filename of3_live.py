@@ -109,7 +109,7 @@ class LiveModel:
         """Build OpenFold3 with this spec's checkpoint, and point at its version's pose cache."""
         from aiddd_pipeline import TARGETS, OF3Predictor
         self.spec = spec
-        cache = TARGETS[self.target].pred_root / f"live_of3ft_{spec['version']}"
+        cache = spec.get("pose_cache") or TARGETS[self.target].pred_root / f"live_of3ft_{spec['version']}"
         self.pred = OF3Predictor(key="live_of3ft", ckpt_path=spec["checkpoint"], target=self.target,
                                  diffusion_samples=spec.get("samples", 1), out_dir=str(cache))
         self.pred.model = OF3Model(spec["checkpoint"], spec.get("samples", 1))

@@ -5,6 +5,7 @@ lifecycle the live demo shows and check what multiplexing does at each step:
   1. base model, first request          weights load on this request            source=loaded
   2. base model, another molecule       weights already in memory               source=memory
   3. the same molecule again            pose from the cache, no GPU work        source=cache
+     then POST /cache/clear for it         the next request computes it live       source=memory
   4. our fine-tune (ev71-v1)            a second model id loads beside the first
   5. in-place update: add ev71-v2 and route the program to it (reconfigure, no restart:
      the loaded models survive it)
@@ -110,6 +111,14 @@ def main():
     b = predict(X7608A)
     show("3 base, same molecule again", b)
     assert b["source"] == "cache" and b["wall"] < 10, (b["source"], b["wall"])
+    clr = requests.post(f"{URL}/cache/clear", json={"compound": "x7608a", "model": "base"}, timeout=60).json()
+    assert clr.get("removed"), clr
+    b = predict(X7608A)
+    show("3b base, after /cache/clear", b)
+    assert b["source"] == "memory", b["source"]
+    b = predict(X7608A)
+    assert b["source"] == "cache", b["source"]
+    print(f"[ok] {'3c the same again':<34} source=cache: the live answer was cached again")
     b = predict(X7259A, model="ev71-v1", fresh=True)
     show("4 ev71-v1, a second model id", b)
     assert b["source"] == "loaded" and sorted(b["resident"]) == ["base", "ev71-v1"], b["resident"]

@@ -336,18 +336,39 @@ class OF3Pool:
         if model_id not in self.models:
             raise KeyError(f"unknown model id {model_id!r}; registered: {sorted(self.models)}")
         spec = self.models[model_id]
-        if not fresh:   # a cached pose needs no model: answer it without loading or waiting
-            from aiddd_pipeline import TARGETS
-            cache = TARGETS["ev71-2a"].pred_root / f"live_of3ft_{spec['version']}"
-            if (out := await asyncio.to_thread(cached_answer, cache, smiles)) is not None:
-                return {**out, "model": dict(spec), "model_id": model_id, "resident": self.resident(),
-                        "zone": self.zone}
+        cached = lambda: asyncio.to_thread(cached_answer, self.cache_dir(spec), smiles)
+        if not fresh and (out := await cached()) is not None:   # no model, no GPU, no waiting
+            return {**out, "model": dict(spec), "model_id": model_id, "resident": self.resident(), "zone": self.zone}
         model = await self.load(model_id)
         async with self.gpu:
+            # Requests that waited here while another computed the same pose take its answer
+            if not fresh and (out := await cached()) is not None:
+                return {**out, "model": dict(spec), "model_id": model_id, "resident": self.resident(), "zone": self.zone}
             if not model.resident:   # freed by reconfigure(): load this id's current weights
                 await asyncio.to_thread(model.load, self.models[model_id])
             out = await asyncio.to_thread(model, smiles, fresh)
         return {**out, "model_id": model_id, "resident": self.resident(), "zone": self.zone}
+
+    @staticmethod
+    def cache_dir(spec: dict) -> Path:
+        """A model version's pose cache folder (the one LiveModel writes): the spec's pose_cache, or
+        predictions/live_of3ft_<version>."""
+        from aiddd_pipeline import TARGETS
+        return Path(spec.get("pose_cache") or TARGETS["ev71-2a"].pred_root / f"live_of3ft_{spec['version']}")
+
+    async def clear_cache(self, model_id: str, smiles: str) -> dict:
+        """Delete one molecule's cached pose for one model id: its next request runs the model live."""
+        import hashlib
+        if model_id not in self.models:
+            raise KeyError(f"unknown model id {model_id!r}; registered: {sorted(self.models)}")
+        lig_id = "smi_" + hashlib.sha1(smiles.encode()).hexdigest()[:12]
+        cache = self.cache_dir(self.models[model_id])
+        removed = []
+        for f in (cache / f"{lig_id}.json", cache / f"{lig_id}.cif"):   # .json first: _cached needs both
+            if f.exists():
+                f.unlink()
+                removed.append(f.name)
+        return {"model_id": model_id, "version": self.models[model_id]["version"], "removed": removed}
 
     def resident(self) -> list:
         """Model ids this replica holds in memory now."""
@@ -462,6 +483,25 @@ class Viewer:
             # RDKit scoring and alignment: in a thread, so the replica keeps serving others
             out.update(await asyncio.to_thread(self.answer_key, row, pose["cif_path"]))
         return JSONResponse(out, 200 if out["status"] in ("ok", "cached") else 422)
+
+    @api.post("/cache/clear")
+    async def cache_clear(self, body: dict):
+        """{"compound": "x7259a" or "smiles": "...", "model": "base" (default: the route)}. Deletes that pose
+        from the cache so the next request computes it live. Affinity (Boltz-2) stays cached."""
+        smiles = str(body.get("smiles") or "").strip()
+        if not smiles and body.get("compound"):
+            rows = self.df[self.df.complex_name.str.endswith("-" + str(body["compound"]))].dropna(subset=["smiles"])
+            if rows.empty:
+                return JSONResponse({"error": f"no compound {body['compound']!r} in the results"}, 404)
+            smiles = rows.iloc[0].smiles
+        if not smiles:
+            return JSONResponse({"error": "need a compound or a smiles"}, 400)
+        try:
+            out = await self.pool.clear_cache.remote(body.get("model") or self.route, smiles)
+        except Exception as e:
+            cause = getattr(e, "cause", None) or e
+            return JSONResponse({"error": f"{type(cause).__name__}: {cause}"[:400]}, 404 if isinstance(cause, KeyError) else 500)
+        return {**out, "smiles": smiles}
 
     @api.get("/models")
     async def models_status(self):

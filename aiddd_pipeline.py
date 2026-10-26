@@ -128,11 +128,24 @@ OF3_OURS_CKPT = (FINETUNE_RUNS / "ft-p2-evfrag-1000s-8g-1023-0139"
 # (predictions/live_of3ft_<version>), so never reuse one for new weights. jobs/demo_*.yaml
 # carry the same entries as Service config.
 LIVE_MODELS = {
-    "base": {"version": "p2-145k", "name": "Base model: OF3-p2 145k", "checkpoint": str(OF3_P2_CKPT)},
-    "ev71-v1": {"version": "ev71-v1", "name": "EV-A71 specialist v1: our Ray Train fine-tune (8 L4s, 1,000 steps)",
-                "checkpoint": str(OF3_OURS_CKPT)},
-    "ev71-v2": {"version": "ev71-v2", "name": "EV-A71 specialist v2: public fine-tune (8 GPUs, 1,000 steps)",
-                "checkpoint": str(OF3_FT_CKPT)},
+    "base": {
+        "version": "p2-145k",
+        "name": "Base model: OF3-p2 145k",
+        "checkpoint": str(OF3_P2_CKPT),
+        "pose_cache": str(SHARED / "predictions" / "live_of3ft_p2-145k"),
+    },
+    "ev71-v1": {
+        "version": "ev71-v1", 
+        "name": "EV-A71 specialist v1: our Ray Train fine-tune (8 L4s, 1,000 steps)",
+        "checkpoint": str(OF3_OURS_CKPT),
+        "pose_cache": str(SHARED / "predictions" / "live_of3ft_ev71-v1"),
+    },
+    "ev71-v2": {
+        "version": "ev71-v2", 
+        "name": "EV-A71 specialist v2: public fine-tune (8 GPUs, 1,000 steps)",
+        "checkpoint": str(OF3_FT_CKPT),
+        "pose_cache": str(SHARED / "predictions" / "live_of3ft_ev71-v2"),
+    },
 }
 # Notebook 03's demo compounds (§6.2): EV-A71 2A late follow-ons with a crystal structure, in no
 # model's training set. Their poses are cached for every LIVE_MODELS version before the workshop.
