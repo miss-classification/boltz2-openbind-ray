@@ -11,15 +11,24 @@ Service: https://aiddd-viewer-5ms2e.cld-g54aiirwj1s8t9kt.s.anyscaleuserdata.com,
 - Before the handoff (commits c84aaf7..a3f1eed): real multiplexing (of3_live.py, OF3Pool,
   LIVE_MODELS, jobs/demo_*.yaml, scripts/check_serve.py), verified on the workspace cluster:
   check_serve.py passes all steps, 03_serve runs end to end with USE_GPUS = True.
-- P0-1: in progress
-- P0-2: in progress
-- P0-3: pending
-- P0-4: pending
-- P1-1: pending
-- P1-2: pending. docs/images/serve_composition.svg was not in the workspace (not on disk, not in git).
-- P1-3: pending
-- P1-4: pending
-- P2: pending
+- P0-1 done: §6 runs for attendees through the Service. Verified Oct 25 ~22:5x: `USE_GPUS = False` with
+  `AIDDD_SERVICE_URL` set (all §6 cells and the 6.7 room cell, no errors) and unset (prints how to set it, skips).
+  The "not deployed yet" message for an unregistered id: verified once demo_1 is applied (pending, end of P0-3).
+  Presenter path (`USE_GPUS = True`) verified 22:2x Oct 25 on the final notebook, all code cells, no errors:
+  6.3 base computed live in 42 s (12 s loading the model); 6.4 v1 from cache, 9.6 s (the model load);
+  6.5 v2 from cache, 46.7 s (the model load); base again 37 s (evicted, loads again).
+- P0-2 done: load_room.py 40×6, P99 118.3 s → 0.24 s warm, 0 errors (table below). Concurrency fixes, scoring
+  memo, MAX_RESIDENT 3, `fresh` gated by the Viewer's `allow_fresh` (off for the room).
+- P0-3 in progress: RMSD table done; latency, size, in-place, memory and zones measuring now.
+- P0-4 done: §7 line rewritten from `wh.by_stage`; x7259a and x7101a causes in "Inconsistencies" below.
+- P1-1 done: zone per replica (`ray.io/availability-zone` node label, EC2 metadata fallback) in responses,
+  `/models`, the viewer's pool line and the 6.7 table.
+- P1-2 done: `docs/images/serve_composition.svg` drawn from `Viewer.predict` (the handoff's copy was not in the
+  workspace) and rendered to check it; 6.6 text and 2 table rows. Not yet checked in JupyterLab itself.
+- P1-3 done: panel table after 6.7, names from Ray 2.59's `serve_dashboard_panels.py` and
+  `serve_deployment_dashboard_panels.py`. Click path in the Anyscale console: not verified (no browser here).
+- P1-4 done: README rows and how attendees get the URL.
+- P2 done: route, zone, history and status text 14 px on the viewer page (page script tested in a JS interpreter).
 
 ## Decisions for Geoff
 - MAX_RESIDENT on the Service: 3 (Geoff chose 3 on Oct 25, before going to sleep). Applied; the notebook's own
@@ -39,6 +48,9 @@ Service: https://aiddd-viewer-5ms2e.cld-g54aiirwj1s8t9kt.s.anyscaleuserdata.com,
   about 31 s, 1 sample about 25 s (one L4 to itself). Switching needs new version names (the pose caches are per
   version) and re-warming. Suggested line for Q&A: "with more samples the base model closes part of the gap; the
   fine-tune is right on every one of these with a single sample."
+- **v2's model load on stage: 20 to 47 s** (6.7 GB checkpoint that also carries training state; measured in
+  several runs tonight). The notebook says so in 6.5. Option, not done: a weights-only copy of the checkpoint
+  (about 1.5 GB) would load in about 10 s, but it is a new file next to the published one; your call.
 - **Alicia's x7101a table mixes settings.** Her v1 1.18 / v2 0.80 match tonight's 5-sample runs (1.19 / 0.82); her
   base 6.42 matches 1-sample runs (6.17), not 5 samples (1.45).
 
@@ -56,22 +68,57 @@ scripts/measure_service.py, version g9yshm5m, all 18 from the pose cache (22:1x 
 | x7101a | 6.17 | 4.32 | 0.78 | yes |
 
 ## Latency (s)
+
+scripts/measure_service.py on the Service, version g9yshm5m (22:3x Oct 25). Wall time of one /predict for x7259a
+(cold) or x7608a (resident, cached), through the public URL. cold = the id was just re-registered, so the request
+loads the model and computes; resident = `fresh` on a loaded model; cached = the pose from the cache.
+
 | Model id | cached | resident | cold (load + compute) | load alone |
 |---|---|---|---|---|
+| base | 0.2 | 25.3 | 61.7 | 22.1 |
+| ev71-v1 | 0.0 | 25.0 | 40.6 | 15.0 |
+| ev71-v2 | 0.0 | 25.1 | 98.0 | 72.4 |
+
+Loads on the Service read the checkpoint from shared storage and vary run to run: on the workspace cluster
+tonight base loaded in 6 to 13 s, v1 in 8 to 10 s, v2 in 19 to 47 s. v2's checkpoint is 6.7 GB (training state
+included). The 4 numbers the handoff listed as conflicting now say: 6.1 "about 5 to 10 s" (load) → update to
+match this table; `COLD` in 6.3; the `of3_live.py` docstring (17 s for the model itself; measured forward
+pass ~16 to 17 s inside the 25 s resident time); the viewer page's "about 30 s" (resident 25 s).
 
 ## Fresh time by compound size
+
+Same run, ev71-v2 resident, `fresh` (model already in memory):
+
 | Compound | stage | heavy atoms | seconds |
 |---|---|---|---|
+| x0554b | fragment (median heavy-atom count among fragments) | 13 | 23.5 |
+| x7259a | late follow-on | 28 | 24.8 |
+| x7096a | largest compound in the set | 35 | (107, invalid: the OF3Pool replica restarted during this request; see below) |
+
+Fragment to late follow-on adds about 1 s: the protein (about 150 residues) dominates the cost, not the ligand.
 
 ## In-place updates
+
+Same run, the real jobs/demo_*.yaml, `anyscale service deploy --in-place`, timed from the command until /models
+shows the new route and registry. Anyscale keeps the Service in UPDATING for 1 to 2 minutes after that; a second
+deploy is refused until it is RUNNING again.
+
 | Step | seconds until the new route answers | resident after |
 |---|---|---|
+| demo_1 → demo_2 | 10.2 | [] (nothing was loaded; survival not tested in this run, re-test pending) |
+| demo_2 → demo_3 | 12.2 | [] |
 
 ## Memory: replica_memory_gb with 2 resident / 3 resident
 
 Workspace cluster, check_serve.py on the final server code (22:1x Oct 25): base only 7.0 GB, 2 resident
-10.1 GB, 3 resident 13.3 GB (`/models` replica_memory_gb, the OF3Pool replica's resident set size). The L4
-node has 32 GB. Service numbers: pending.
+10.1 GB, 3 resident 13.3 GB (`/models` replica_memory_gb, the OF3Pool replica's resident set size).
+Service (measure_service.py, 22:3x): 0 resident 0.2 GB, 1 resident 8.5 GB, 2 resident 11.5 GB, 3 resident
+14.6 GB. The L4 node has 32 GB and may also host a Boltz2Live replica.
+
+**Open issue (investigating):** in that run the OF3Pool replica restarted during the largest compound's fresh
+prediction with 3 models resident: afterwards nothing was resident and the replica had moved from us-west-2a to
+us-west-2c. Likely the node's memory (Ray's memory monitor kills the largest worker). Service logs need an API
+key this workspace does not have, so it is being reproduced on the workspace cluster.
 
 ## Zones
 
