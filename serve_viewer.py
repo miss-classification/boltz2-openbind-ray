@@ -30,6 +30,7 @@ import resource
 from pathlib import Path
 
 import pandas as pd
+import ray
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from ray import serve
@@ -255,15 +256,22 @@ def live_cache(pred, version: str) -> Path:
 #
 # GPU memory is not the limit (about 5 GB for Boltz-2 and 3 GB for OpenFold3 of an L4's 24 GB); host
 # memory is. A live Boltz-2 prediction takes a 32 GB L4 node to about 18 GB, and OF3Pool holds about 15 GB
-# with 3 models loaded: together on one node, Ray's memory monitor stops one of them. build_app() gives
-# each its own node.
+# with 3 models loaded: together on one node, Ray's memory monitor stops one of them. So each GPU
+# deployment also reserves its host memory ("memory" in ray_actor_options). Ray offers actors about 70%
+# of a node's free memory (the object store gets the rest), about 22 GB here, so it never places two of
+# them on one node. The reservation is for placement only: it does not cap what a replica uses.
+GPU_REPLICA_MEMORY = 15e9
+
 # Ray 2.59 runs a sync method on the replica's event loop, so a minute-long prediction there would
 # hold up every other request. These deployments answer cached poses straight from disk, and run a
 # live prediction in a thread, one at a time per replica.
 @serve.deployment(
-    ray_actor_options={"num_gpus": 0.5, "accelerator_type": "L4"},
-    # 1 replica: two live Boltz-2 predictions on one 32 GB node would not fit either;
-    # cached affinities need no second replica
+    ray_actor_options={
+        "num_gpus": 0.5,
+        "memory": GPU_REPLICA_MEMORY,
+        "accelerator_type": "L4",
+    },
+    # 1 replica: cached affinities need no second one
     autoscaling_config={
         "min_replicas": 1,
         "max_replicas": 1,
@@ -310,13 +318,14 @@ class Boltz2Live:
 # replica's host memory (measured on the Service: 8.5, 11.5 and 14.6 GB with 1, 2 and 3 loaded; the
 # weights move to the GPU per request). 3 keeps every demo model loaded, so a room that mixes
 # ids never waits on a reload. A further id evicts the least recently used one: Ray Serve calls
-# its __del__, which frees it. Notebook 03's own pool keeps 2, to show an eviction.
+# its __del__, which frees it. Notebook 03's 6.1 deployment has the same settings.
 MAX_RESIDENT = 3
 
 
 @serve.deployment(
     ray_actor_options={
         "num_gpus": 0.5,
+        "memory": GPU_REPLICA_MEMORY,
         "accelerator_type": "L4",
         # OF3-p2 checkpoints only load in OpenFold3 0.4.x
         "runtime_env": {"py_executable": OF3_LEGACY_PY},
@@ -450,6 +459,8 @@ class OF3Pool:
             * resource.getpagesize()
             / 1e9
         )
+        # what Ray reserved for this replica: its GPU share and host memory
+        assigned = ray.get_runtime_context().get_assigned_resources()
         return {
             "registry": {
                 i: {k: v for k, v in m.items() if k != "checkpoint"}
@@ -458,6 +469,8 @@ class OF3Pool:
             "resident": self.resident(),
             "max_resident": MAX_RESIDENT,
             "replica_memory_gb": round(rss, 1),
+            "replica_gpus": assigned.get("GPU", 0),
+            "replica_memory_reserved_gb": round(assigned.get("memory", 0) / 1e9, 1),
             "zone": self.zone,
         }
 
@@ -691,17 +704,22 @@ class Viewer:
 
 
 def build_app(accelerator: str = "L4"):
-    """The Viewer composed with the model deployments, on the given GPU type. OF3Pool asks for a
-    whole GPU, so on the Service's 2 single-GPU nodes it has a node (and its host memory) to
-    itself, and Boltz-2 (half a GPU) runs on the other. Default registry:
+    """The Viewer composed with the model deployments, on the given GPU type. Each GPU deployment
+    asks for half a GPU and reserves its host memory, so on the Service's 2 single-GPU nodes
+    OF3Pool and Boltz-2 each have a node to themselves. Default registry:
     aiddd_pipeline.LIVE_MODELS; default route: ev71-v2."""
     return Viewer.bind(
         Boltz2Live.options(
-            ray_actor_options={"num_gpus": 0.5, "accelerator_type": accelerator}
+            ray_actor_options={
+                "num_gpus": 0.5,
+                "memory": GPU_REPLICA_MEMORY,
+                "accelerator_type": accelerator,
+            }
         ).bind(),
         OF3Pool.options(
             ray_actor_options={
-                "num_gpus": 1,
+                "num_gpus": 0.5,
+                "memory": GPU_REPLICA_MEMORY,
                 "accelerator_type": accelerator,
                 "runtime_env": {"py_executable": OF3_LEGACY_PY},
             }
