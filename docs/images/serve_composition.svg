@@ -41,7 +41,7 @@
   <!-- OF3Pool (GPU) -->
   <rect x="560" y="40" width="340" height="170" rx="10" fill="#f2f8f3" stroke="#7fb08c"/>
   <text x="730" y="66" text-anchor="middle" font-size="15" font-weight="700" fill="#22272e">OF3Pool: pose</text>
-  <text x="730" y="84" text-anchor="middle" font-size="12" fill="#444c56">1 L4 node · OpenFold3 0.4.x in its own Python</text>
+  <text x="730" y="84" text-anchor="middle" font-size="12" fill="#444c56">½ L4 · 15 GB RAM · OpenFold3 0.4.x in its own Python</text>
   <text x="730" y="99" text-anchor="middle" font-size="11" fill="#6a737d">runtime_env={"py_executable": ...}</text>
   <text x="578" y="125" font-size="12" fill="#22272e">@serve.multiplexed: model id → checkpoint</text>
   <rect x="578" y="136" width="96" height="26" rx="4" fill="#ffffff" stroke="#9cc6a6"/>
@@ -56,7 +56,7 @@
   <!-- Boltz2Live (GPU) -->
   <rect x="560" y="240" width="340" height="110" rx="10" fill="#fbf5ec" stroke="#d1a866"/>
   <text x="730" y="266" text-anchor="middle" font-size="15" font-weight="700" fill="#22272e">Boltz2Live: affinity</text>
-  <text x="730" y="284" text-anchor="middle" font-size="12" fill="#444c56">½ L4 · Boltz-2 in the image's Python</text>
+  <text x="730" y="284" text-anchor="middle" font-size="12" fill="#444c56">½ L4 · 15 GB RAM · Boltz-2 in the image's Python</text>
   <text x="578" y="310" font-size="12" fill="#444c56">1 replica, its own node; OpenFold3 does not</text>
   <text x="578" y="325" font-size="12" fill="#444c56">predict affinity</text>
 
