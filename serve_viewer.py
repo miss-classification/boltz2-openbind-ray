@@ -173,9 +173,11 @@ async function predict(ev){
 const answers = [];
 // Where a pose came from: the pose cache, a model the OpenFold3 replica already held, or one
 // Ray Serve loaded for this request (model multiplexing: load() runs once per model id).
+const secs = v => v < 10 ? v.toFixed(1) : v.toFixed(0);
 function source(j){
-  const s = j.seconds.toFixed(0);
-  if (j.source === "cache") return `<b>pose from cache</b> (computed earlier) &middot; ${s} s`;
+  const s = secs(j.seconds);
+  if (j.source === "cache") return `<b>pose from cache</b> (computed earlier) &middot; ${s} s` +
+    (j.load_seconds ? `, ${secs(j.load_seconds)} s of it loading the model` : "");
   if (j.source === "memory") return `<b>computed live</b>, model already in memory &middot; ${s} s`;
   return `<b>computed live</b>, model loaded for this request (${j.load_seconds.toFixed(0)} s of ${s} s)`;
 }
@@ -191,7 +193,7 @@ function record(smi, j){
     `<table><tr><th>Answered by</th><th>RMSD (&Aring;)</th><th>ipTM</th><th>Affinity</th><th>How</th></tr>` +
     rows.map((h, i) => `<tr class="${i === rows.length - 1 ? "new" : ""}"><td>${h.name}<br><span class="ver">version ${h.version}</span></td>` +
       `<td class="${h.rmsd !== null && h.rmsd < 2 ? "good" : ""}">${f(h.rmsd)}</td><td>${f(h.iptm)}</td><td>${f(h.aff)}</td>` +
-      `<td>${h.how}<br><span class="ver">${h.s.toFixed(0)} s</span></td></tr>`).join("") +
+      `<td>${h.how}<br><span class="ver">${secs(h.s)} s</span></td></tr>`).join("") +
     `</table>`;
 }
 // The OpenFold3 pool: which model ids its replica holds in memory now (GET /models).

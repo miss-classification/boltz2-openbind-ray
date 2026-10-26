@@ -425,11 +425,13 @@ MERS-CoV Mpro. The first 2 rows are earlier layouts on 8 L4 GPUs; the figure bel
 ├── aiddd_pipeline.py                   Ray Data benchmark pipeline: validate, predict, score
 ├── finetune_ray_train.py               Ray Train fine-tuning of OpenFold3 (TorchTrainer, Lightning DDP)
 ├── serve_viewer.py                     Ray Serve application: results viewer and live prediction
+├── of3_live.py                         OpenFold3 held in memory, for Ray Serve model multiplexing
 │
 ├── jobs/
 │   ├── job.yaml                        Everyday Anyscale Job: benchmarks, fine-tuning, sweeps
 │   ├── workshop.yaml                   The workshop's live run on pinned GPU nodes
-│   └── service.yaml                    Anyscale Service for sharing the viewer
+│   ├── service.yaml                    Anyscale Service for sharing the viewer
+│   └── demo_{1_base,2_ft,3_next_ft}.yaml  Live demo steps: add a model to the Service, in place
 ├── configs/
 │   └── finetune_ev71.yml               OpenFold3 training settings used by the fine-tune
 ├── scripts/
@@ -441,7 +443,7 @@ MERS-CoV Mpro. The first 2 rows are earlier layouts on 8 L4 GPUs; the figure bel
 │   ├── pack_sweep.py                   Predictors per GPU and vCPUs per node: throughput sweep
 │   ├── tune_finetune.py                Ray Tune learning-rate search over complete Ray Train runs
 │   ├── tune_boltz.py                   Ray Tune search over Boltz-2 inference settings
-│   └── check_serve.py                  End-to-end check of the Serve application
+│   └── check_serve.py                  End-to-end check of the Serve application and multiplexing
 ├── image/Containerfile                 Container image: Ray 2.59, Boltz-2, OpenFold3 0.5 and 0.4.3
 └── docs/
     ├── images/                         Figures and animations used in this README and the notebooks

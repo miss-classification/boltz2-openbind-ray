@@ -147,6 +147,6 @@ class LiveModel:
         loaded_now, self.first = self.first, False
         out["source"] = ("cache" if out["status"] == "cached" else "loaded" if loaded_now else "memory")
         out["load_seconds"] = round(self.load_seconds, 1) if loaded_now else 0.0
-        out["seconds"] = round(time.time() - t0, 1)
+        out["seconds"] = round(time.time() - t0 + out["load_seconds"], 1)   # the load is part of this request
         out["model"] = dict(self.spec)
         return out
