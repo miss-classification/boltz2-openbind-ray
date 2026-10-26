@@ -349,7 +349,8 @@ class OF3Pool:
 
 
 @serve.deployment(ray_actor_options={"num_cpus": 1},
-                  autoscaling_config={"min_replicas": 1, "max_replicas": 3, "target_ongoing_requests": 32},
+                  # 2 from the start: a room arrives faster than autoscaling reacts
+                  autoscaling_config={"min_replicas": 2, "max_replicas": 4, "target_ongoing_requests": 16},
                   max_ongoing_requests=100,   # requests wait here on GPU calls; Ray Serve's default is 5
                   user_config={"route": "ev71-v2", "allow_fresh": False})
 @serve.ingress(api)
@@ -357,6 +358,7 @@ class Viewer:
     def __init__(self, live: DeploymentHandle, pool: DeploymentHandle):
         self.live = live   # Boltz-2: affinity
         self.pool = pool   # OpenFold3: poses, multiplexed by model id
+        self.scored = {}   # (pose file, mtime, crystal) -> RMSD and aligned pose
         # File by file: a column that is all null in one file and numeric in another
         # will not merge as one Parquet dataset.
         self.df = relocate_paths(pd.concat([pd.read_parquet(f) for f in sorted(RESULTS.glob("*.parquet"))],
@@ -378,7 +380,17 @@ class Viewer:
 
     def answer_key(self, row, cif_path: str) -> dict:
         """For a molecule with a crystal structure: the live pose's ligand RMSD to that crystal,
-        and the pose moved onto it, so the page can draw the two ligands together."""
+        and the pose moved onto it, so the page can draw the two ligands together. Scoring takes
+        about 0.25 s of CPU, so each pose file is scored once per replica (keyed by its path and
+        modification time: a fresh prediction that overwrites it is scored again)."""
+        key = (cif_path, Path(cif_path).stat().st_mtime_ns, row.complex_name)
+        if key not in self.scored:
+            if len(self.scored) > 2000:
+                self.scored.clear()
+            self.scored[key] = self._score(row, cif_path)
+        return self.scored[key]
+
+    def _score(self, row, cif_path: str) -> dict:
         ref_pdb = Path(row.ref_pdb)
         ref_sdf = ref_pdb.with_name(ref_pdb.name.replace("_complex_ref.pdb", "_ligand_ref.sdf"))
         try:

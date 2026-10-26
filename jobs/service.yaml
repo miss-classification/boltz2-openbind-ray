@@ -9,7 +9,7 @@
 name: aiddd-viewer
 image_uri: anyscale/image/aiddd-boltz2-of3:4
 working_dir: .
-excludes: [image, docs, slides, .git, .bin, __pycache__, "*.ipynb", .ipynb_checkpoints]
+excludes: [image, docs, slides, scripts, jobs, .git, .bin, __pycache__, "*.ipynb", "*.md", .ipynb_checkpoints]   # only what the app runs; edits elsewhere leave --in-place a pure reconfigure
 env_vars:
   AIDDD_SHARED: /mnt/shared_storage/aiddd
 # Anyone with the URL can open the page and run GPU predictions (on at most 2 L4s).
