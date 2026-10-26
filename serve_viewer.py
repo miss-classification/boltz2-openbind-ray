@@ -66,10 +66,13 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
  #hist table{margin-top:8px;font-size:14px} #hist tr:hover{background:none;cursor:default}
  #hist .new td{background:#eef7f0} #hist .ver{font-family:ui-monospace,monospace;font-size:12px;color:#556}
  #lstat{font-size:14px;line-height:1.5}
+ #step{font-size:16px;font-weight:600;color:#1f3a68;background:#eef3fb;border-radius:6px;padding:6px 10px;margin:0 0 8px}
+ #step:empty{display:none} #step.off{color:#8a4b00;background:#fdf3e7}
  #pool{font-size:14px;color:#334;margin-top:8px;line-height:1.5} #pool code{background:#eef1f6;padding:0 4px;border-radius:3px;font-size:14px}
 </style></head><body>
 <div id="list">
 <form id="live" onsubmit="predict(event)"><h2>Live prediction</h2>
+ <div id="step"></div>
  <input id="smi" placeholder="SMILES, e.g. CNC(=O)c1nn(C)c2ccccc12" style="width:100%;box-sizing:border-box;padding:5px">
  <button style="margin:6px 0">Predict</button>
  <label id="freshbox" style="display:none;font-size:12px;color:#444" title="Run the model even if this pose is cached: about 25 s with the model in memory, up to 100 s if it must load first">
@@ -208,6 +211,9 @@ async function pool(){
       (p.resident.length ? p.resident.map(i => `<code>${i}</code>`).join(" ") : "none yet") + `.` +
       (p.zone ? ` OpenFold3 replica in <code>${p.zone}</code>.` : "");
     document.getElementById("freshbox").style.display = p.allow_fresh ? "inline" : "none";
+    const step = document.getElementById("step");
+    step.textContent = p.step || "Not on a demo step: apply jobs/demo_1_base.yaml";
+    step.className = p.step ? "" : "off";
   } catch(e) {}
 }
 pool();
@@ -382,6 +388,7 @@ class Viewer:
         shared room: 40 fresh requests on one OpenFold3 replica would queue for half an hour."""
         self.route = cfg["route"]
         self.allow_fresh = cfg.get("allow_fresh", False)
+        self.step = cfg.get("step", "")   # the demo step that set this config (jobs/demo_*.yaml)
 
     def answer_key(self, row, cif_path: str) -> dict:
         """For a molecule with a crystal structure: the live pose's ligand RMSD to that crystal,
@@ -458,7 +465,8 @@ class Viewer:
     @api.get("/models")
     async def models_status(self):
         """The registry, the route, and which model ids the OF3Pool replica holds in memory."""
-        return {"route": self.route, "allow_fresh": self.allow_fresh, **(await self.pool.status.remote())}
+        return {"route": self.route, "allow_fresh": self.allow_fresh, "step": self.step,
+                **(await self.pool.status.remote())}
 
     @api.get("/structure/pred/{key}/{cid}", response_class=PlainTextResponse)
     def pred(self, key: str, cid: str):

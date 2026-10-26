@@ -40,4 +40,4 @@ applications:
               name: "EV-A71 specialist v1: our Ray Train fine-tune (8 L4s, 1,000 steps)"
               checkpoint: /mnt/shared_storage/aiddd/finetune/runs/ft-p2-evfrag-1000s-8g-1023-0139/checkpoint_2026-10-23_04-05-55.886640/of3_ev71_ft.pt
       - name: Viewer
-        user_config: {route: ev71-v1}
+        user_config: {route: ev71-v1, step: "demo_2: base model + our fine-tune (ev71-v1)"}

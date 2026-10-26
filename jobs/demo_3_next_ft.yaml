@@ -44,4 +44,4 @@ applications:
               name: "EV-A71 specialist v2: public fine-tune (8 GPUs, 1,000 steps)"
               checkpoint: /mnt/shared_storage/aiddd/of3_cache/of3p2-ft-ev2a.ckpt
       - name: Viewer
-        user_config: {route: ev71-v2}
+        user_config: {route: ev71-v2, step: "demo_3: base model + our fine-tune + public fine-tune (ev71-v2)"}
