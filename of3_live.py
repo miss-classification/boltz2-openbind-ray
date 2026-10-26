@@ -36,6 +36,10 @@ class OF3Model:
                                            data_module_args={"num_workers": data_workers})
         self.runner = InferenceExperimentRunner(config, num_diffusion_samples, 1, False, False, self.out)
         self.runner.setup()                     # builds the model and loads the weights into it
+        # setup() loaded the EMA weights into the model itself. The separate EMA copy is only for
+        # training and validation: 2.3 GB of host memory per model that inference never reads.
+        self.runner.lightning_module.ema = None
+        _release_memory()
         self.load_seconds = time.time() - t0
 
     def predict(self, queries: dict) -> Path:
@@ -53,13 +57,23 @@ class OF3Model:
         runner = self.__dict__.pop("runner", None)
         if runner is not None:
             del runner
-            gc.collect()
-            try:
-                import torch
-                torch.cuda.empty_cache()
-            except Exception:
-                pass
+            _release_memory()
         shutil.rmtree(self.__dict__.get("out", ""), ignore_errors=True)
+
+
+def _release_memory():
+    """Collect freed tensors and hand the memory back to the OS (glibc keeps it otherwise)."""
+    gc.collect()
+    try:
+        import torch
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
 
 
 def predict_one(pred, smiles: str) -> dict:

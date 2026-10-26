@@ -14,7 +14,10 @@ lifecycle the live demo shows and check what multiplexing does at each step:
     python scripts/check_serve.py --keep                # leave the app running afterwards
 
 Deploys as its own application ("aiddd-check" at /check), so other Serve apps on the
-cluster, such as notebook 03's "aiddd-pose", keep running.
+cluster, such as notebook 03's "aiddd-pose", keep running. Deploys declaratively, through
+Serve's REST API: the path `serve deploy` and `anyscale service deploy --in-place` take, where
+a change to user_config only is a lightweight update (reconfigure(), no restart). serve.run
+would start new replicas on every call.
 
 Needs L4 GPUs for the Boltz-2 and OpenFold3 replicas. "fresh" requests delete the molecule's
 cached pose first, so the model really runs.
@@ -25,26 +28,41 @@ import sys
 import time
 from pathlib import Path
 
+import ray
 import requests
 from ray import serve
+from ray.dashboard.modules.serve.sdk import ServeSubmissionClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # the repository root
 from aiddd_pipeline import LIVE_MODELS  # noqa: E402
-from serve_viewer import Boltz2Live, OF3Pool, Viewer  # noqa: E402
 
 APP, PREFIX = "aiddd-check", "/check"
 URL = "http://localhost:8000" + PREFIX
+DASHBOARD = "http://localhost:8265"
 X7259A = "CSc1ncnc(N2CCC[C@@H]2C2CC2)c1CC(=O)N1CCC[C@H](C(N)=O)C1"
 X7608A = "CSc1ncnc(N(C)CC(F)(F)F)c1CC(=O)N1C[C@@H](C(N)=O)C[C@@H]2C[C@@H]21"
 
 
-def deploy(model_ids, route):
-    """serve.run with this registry and route. On a running app it changes only user_config,
-    which is what `anyscale service deploy --in-place` does: reconfigure(), no restart."""
+def deploy(model_ids, route, timeout=1800):
+    """Deploy serve_viewer:app from a config with this registry and route, and wait until the
+    Viewer serves that route. On a running app this changes only user_config."""
     models = {i: LIVE_MODELS[i] for i in model_ids}
-    app = Viewer.options(user_config={"route": route}).bind(
-        Boltz2Live.bind(), OF3Pool.options(user_config={"models": models}).bind())
-    serve.run(app, name=APP, route_prefix=PREFIX, blocking=False)
+    # The code this driver uploaded (a gcs:// package) and its pip packages, as the app's runtime_env
+    env = {k: v for k, v in ray.get_runtime_context().runtime_env.items() if k in ("working_dir", "pip", "env_vars")}
+    ServeSubmissionClient(DASHBOARD).deploy_applications({"applications": [{
+        "name": APP, "route_prefix": PREFIX, "import_path": "serve_viewer:app", "runtime_env": env,
+        "deployments": [{"name": "OF3Pool", "user_config": {"models": models}},
+                        {"name": "Viewer", "user_config": {"route": route}}]}]})
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        try:
+            st = requests.get(f"{URL}/models", timeout=30).json()
+            if st.get("route") == route and sorted(st["registry"]) == sorted(model_ids):
+                return st
+        except Exception:
+            pass
+        time.sleep(5)
+    raise TimeoutError(f"app not serving route {route} with {model_ids} after {timeout} s")
 
 
 def predict(smiles, model=None, fresh=False):
@@ -69,6 +87,9 @@ def main():
     ap.add_argument("--keep", action="store_true", help="keep the app running after the checks")
     args = ap.parse_args()
 
+    ray.init(runtime_env={"working_dir": str(Path(__file__).resolve().parents[1]),
+                          "excludes": ["image", "docs", ".git", "*.ipynb", "__pycache__"]},
+             ignore_reinit_error=True, logging_level="ERROR")
     t0 = time.time()
     deploy(["base", "ev71-v1"], route="base")
     print(f"[ok] app deployed in {time.time() - t0:.0f} s (includes GPU node startup)")
@@ -91,8 +112,7 @@ def main():
     assert b["source"] == "loaded" and sorted(b["resident"]) == ["base", "ev71-v1"], b["resident"]
 
     t0 = time.time()
-    deploy(["base", "ev71-v1", "ev71-v2"], route="ev71-v2")
-    status = requests.get(f"{URL}/models", timeout=60).json()
+    status = deploy(["base", "ev71-v1", "ev71-v2"], route="ev71-v2")
     print(f"[ok] {'5 in-place update':<34} {time.time() - t0:.0f} s; route={status['route']} "
           f"resident={status['resident']} memory={status['replica_memory_gb']} GB")
     assert status["route"] == "ev71-v2" and "ev71-v2" in status["registry"], status
@@ -105,12 +125,11 @@ def main():
     status = requests.get(f"{URL}/models", timeout=60).json()
     print(f"[ok] pool after eviction: resident={status['resident']} memory={status['replica_memory_gb']} GB")
 
-    deploy(["base"], route="base")
-    status = requests.get(f"{URL}/models", timeout=60).json()
+    status = deploy(["base"], route="base")
     print(f"[ok] {'7 reset to step 1 (base only)':<34} resident={status['resident']} memory={status['replica_memory_gb']} GB")
     assert status["resident"] == [], "ids that left the registry should be freed"
     gone = requests.post(f"{URL}/predict", json={"smiles": X7259A, "model": "ev71-v2"}, timeout=900)
-    assert gone.status_code == 500 and "unknown model id" in gone.text, (gone.status_code, gone.text[:200])
+    assert gone.status_code == 404 and "unknown model id" in gone.text, (gone.status_code, gone.text[:300])
     print(f"[ok] {'  ev71-v2 by id after the reset':<34} rejected: not registered")
     b = predict(X7259A)
     show("8 base after the reset", b)

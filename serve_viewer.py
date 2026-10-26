@@ -256,9 +256,9 @@ class Boltz2Live:
         return {**predict_one(self.pred, smiles), "model": self.model}
 
 
-# How many model ids one OF3Pool replica keeps loaded. Each holds about 6 GB of host memory
-# (the weights move to the GPU per request), and the L4 node has 32 GB. A further id evicts the
-# least recently used one: Ray Serve calls its __del__, which frees it.
+# How many model ids one OF3Pool replica keeps loaded. Each holds about 1.5 GB of host memory
+# (the weights move to the GPU per request), so more fit; 2 keeps the demo's eviction visible.
+# A further id evicts the least recently used one: Ray Serve calls its __del__, which frees it.
 MAX_RESIDENT = 2
 
 
@@ -391,7 +391,9 @@ class Viewer:
                 self.live.remote(smiles),
                 self.pool.options(multiplexed_model_id=model_id).remote(smiles, fresh))
         except Exception as e:
-            return JSONResponse({"status": "failed", "error": f"{type(e).__name__}: {e}"[:600]}, 500)
+            cause = getattr(e, "cause", None) or e     # the replica's own exception, not Ray's wrapper
+            code = 404 if isinstance(cause, KeyError) else 500
+            return JSONResponse({"status": "failed", "error": f"{type(cause).__name__}: {cause}"[:600]}, code)
         iptm = pose["metrics"].get("ligand_iptm", pose["metrics"].get("iptm"))
         out = {**pose, "pose_model": pose["model"]["name"], "pose_iptm": iptm,
                "metrics": aff["metrics"], "affinity_status": aff["status"],
