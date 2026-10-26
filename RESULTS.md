@@ -115,10 +115,20 @@ Workspace cluster, check_serve.py on the final server code (22:1x Oct 25): base 
 Service (measure_service.py, 22:3x): 0 resident 0.2 GB, 1 resident 8.5 GB, 2 resident 11.5 GB, 3 resident
 14.6 GB. The L4 node has 32 GB and may also host a Boltz2Live replica.
 
-**Open issue (investigating):** in that run the OF3Pool replica restarted during the largest compound's fresh
-prediction with 3 models resident: afterwards nothing was resident and the replica had moved from us-west-2a to
-us-west-2c. Likely the node's memory (Ray's memory monitor kills the largest worker). Service logs need an API
-key this workspace does not have, so it is being reproduced on the workspace cluster.
+**Found and fixed: OF3Pool and a live Boltz-2 prediction must not share a node.** In the first
+measure_service.py run the OF3Pool replica restarted during a request (afterwards nothing was resident and it had
+moved from us-west-2a to us-west-2c). Evidence, workspace cluster (23:0x Oct 25):
+- 3 models resident plus the largest compound fresh, with Boltz-2 answering from its cache: no restart (replica
+  peak 15.0 GB).
+- One live Boltz-2 prediction (x7096a, 123 s) took its 32.4 GB L4 node to 18.5 GB used.
+- On the Service, the restart happened while that compound's Boltz-2 affinity ran live; with 2 nodes and 4
+  half-GPU slots, OF3Pool always shared a node with a Boltz2Live replica. 15 + 18.5 GB is past Ray's memory
+  monitor threshold (95% of the node). The Service's logs need an API key this workspace lacks, so the kill
+  itself is inferred, not seen.
+
+Fix (commit 75d1394): OF3Pool asks for a whole L4 (`num_gpus: 1`), so Boltz-2 (half an L4) can only run on the
+other node; Boltz2Live runs 1 replica (two live Boltz-2 runs would not fit one node either). check_serve.py
+passes with this placement. On the Service: verified by the "both live" step below (pending).
 
 ## Zones
 
