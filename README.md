@@ -475,7 +475,7 @@ Both notebook settings live in the Setup cell of each notebook:
 | Setting | Default | Meaning |
 |---|---|---|
 | `USE_GPUS` | `False` | `False` loads stored results for every GPU step. `True` runs them live and starts GPU nodes |
-| `AIDDD_SERVICE_URL` | unset | Environment variable holding the prediction service address for notebook 03. Unset, the notebook starts Ray Serve in the Workspace instead (needs `USE_GPUS = True`) |
+| `AIDDD_SERVICE_URL` | unset | Environment variable holding the address of the shared Anyscale Service (`aiddd-viewer`) for notebook 03. With `USE_GPUS = False`, section 6 sends its predictions there and 6.7 runs the room exercise; unset, those cells print how to set it and skip. With `USE_GPUS = True` (the presenter), section 6 runs its own Ray Serve pool in the Workspace |
 
 ### Workshop format
 
@@ -488,12 +488,18 @@ Complete Steps 2, 2b and 4 before the session. The 90-minute session then runs a
 | 25 to 45 | 01 | Full benchmark: comparison by campaign stage and across targets |
 | 45 to 60 | 01 | 3D viewer and pose overlays |
 | 60 to 80 | 02 | Fine-tuning OpenFold3 145k with Ray Train: a short live run, then the full run trained beforehand |
-| 80 to 90 | 03 | Live prediction with Ray Serve for a molecule suggested by the audience |
+| 80 to 90 | 03 | Ray Serve: the base model and its fine-tunes in one multiplexed pool, a new version added in place, and the whole room on one shared Service |
 
-The Workspace has a limited number of GPUs, so run the cells of each notebook in order. When notebook 03
-starts Ray Serve in the Workspace (`AIDDD_SERVICE_URL` unset and `USE_GPUS = True`), the application holds
-a GPU until the final cell stops it. Pointing `AIDDD_SERVICE_URL` at a deployed Anyscale Service instead
-uses no Workspace GPU at all.
+The Workspace has a limited number of GPUs, so run the cells of each notebook in order. In notebook 03,
+attendees (`USE_GPUS = False`) use no Workspace GPU: their predictions go to the shared Service. Only the
+presenter (`USE_GPUS = True`) starts a Ray Serve pool in the Workspace, which holds a GPU until the final
+cell stops it.
+
+**Getting `AIDDD_SERVICE_URL`.** The presenter shares the Service address at the start of the session:
+`anyscale service status -n aiddd-viewer` prints it as `query_url` (today
+`https://aiddd-viewer-5ms2e.cld-g54aiirwj1s8t9kt.s.anyscaleuserdata.com`). Set it as a Workspace
+environment variable before starting the notebook, or paste it into the Setup cell in place of
+`os.environ.get("AIDDD_SERVICE_URL", "")`. The same address opens the viewer page in a browser.
 
 ---
 

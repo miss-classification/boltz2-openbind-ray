@@ -22,11 +22,38 @@ Service: https://aiddd-viewer-5ms2e.cld-g54aiirwj1s8t9kt.s.anyscaleuserdata.com,
 - P2: pending
 
 ## Decisions for Geoff
-- MAX_RESIDENT on the Service: 3 (Geoff chose 3 on Oct 25, before going to sleep).
+- MAX_RESIDENT on the Service: 3 (Geoff chose 3 on Oct 25, before going to sleep). Applied; the notebook's own
+  pool keeps 2 and still shows an eviction.
+- **Diffusion samples: keep 1 (recommended, unchanged) or serve 5.** Everything live (notebook 03, the Service,
+  NB01 §3) and the stored benchmark use 1 sample. With 5 samples and OpenFold3's top-ranked pick, the base
+  model recovers a lot, and the "base is wrong on this pocket" story weakens. 14 shortlist follow-ons, within 2 Å
+  (1 sample: Service path, 21:2x Oct 25; 5 samples: in-process models, 22:3x Oct 25, scratch outputs):
+
+  | Model | 1 sample | 5 samples |
+  |---|---|---|
+  | base | 1 of 14 | 6 of 14 |
+  | ev71-v1 (ours) | 8 of 14 | 9 of 14 |
+  | ev71-v2 (public) | 14 of 14 | 14 of 14 |
+
+  x7259a with 5 samples: base 2.08, v1 0.57, v2 0.43 Å (1 sample: 5.3, 0.96, 0.43). A warm 5-sample prediction takes
+  about 31 s, 1 sample about 25 s (one L4 to itself). Switching needs new version names (the pose caches are per
+  version) and re-warming. Suggested line for Q&A: "with more samples the base model closes part of the gap; the
+  fine-tune is right on every one of these with a single sample."
+- **Alicia's x7101a table mixes settings.** Her v1 1.18 / v2 0.80 match tonight's 5-sample runs (1.19 / 0.82); her
+  base 6.42 matches 1-sample runs (6.17), not 5 samples (1.45).
 
 ## RMSD through the Service (Å)
+
+scripts/measure_service.py, version g9yshm5m, all 18 from the pose cache (22:1x Oct 25). 1 diffusion sample.
+
 | Compound | base | ev71-v1 | ev71-v2 | matches 6.2? |
 |---|---|---|---|---|
+| x7259a | 5.20 | 0.96 | 0.43 | base was 5.3 in 6.2; now 5.2 (live runs vary by about 0.2 Å) |
+| x7608a | 4.77 | 0.31 | 0.53 | yes |
+| x7024a | 6.07 | 1.08 | 0.83 | yes |
+| x6714a | 4.73 | 0.92 | 0.38 | yes |
+| x7011a | 4.78 | 1.40 | 0.53 | yes |
+| x7101a | 6.17 | 4.32 | 0.78 | yes |
 
 ## Latency (s)
 | Model id | cached | resident | cold (load + compute) | load alone |
@@ -60,11 +87,14 @@ tail is queueing, not compute: every answer came from the cache.
 |---|---|---|---|---|
 | before: Service version ibhuigyf (commit 4f6af6e: Viewer 1 replica, max_ongoing_requests 5; OF3Pool loads the model before the cache check; Boltz2Live sync), 21:5x Oct 25 | 10.39 | 114.57 | 118.25 | 0 |
 | after 1: version ya7hppeb (commit ddb0700: Viewer 1 to 3 replicas, max_ongoing_requests 100, scoring in a thread; OF3Pool and Boltz2Live answer cached poses with no model or lock; MAX_RESIDENT 3), 22:2x Oct 25 | 10.64 | 12.23 | 12.42 | 0 |
-| after 2: version g9yshm5m (scoring memoized per pose file; Viewer starts at 2 replicas) | pending | | | |
+| after 2, first burst: version g9yshm5m (commit d06d552: scoring memoized per pose file; Viewer starts at 2 replicas), 22:4x Oct 25 | 2.05 | 4.36 | 5.14 | 0 |
+| after 2, second burst (scores already memoized on both Viewer replicas) | 0.16 | 0.20 | 0.24 | 0 |
 
 After 1 removed the tail (P99 118 s to 12 s). Its P50 of 10.6 s was the Viewer's CPU: 240 requests in 65 s
 is 3.7 requests per second, about 0.25 s of RDKit scoring and alignment per request on 1 replica, repeated
-for the same 12 poses. After 2 scores each pose once per replica and starts with 2 replicas.
+for the same 12 poses. After 2 scores each pose once per replica and starts with 2 replicas: the burst of 240
+took 166 s before, 65 s after 1, 15 s after 2 (first burst) and about 1 s once warm. Running load_room.py once
+before the session leaves the Service in the warm state.
 
 ## Metrics: click path from the Anyscale Service page to the Serve panels
 

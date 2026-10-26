@@ -71,6 +71,16 @@ class Service:
         body["wall"] = round(time.time() - t0, 1)
         return body
 
+    @staticmethod
+    def wait_running(timeout=900):
+        import anyscale
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            if str(anyscale.service.status(name=NAME).state).endswith("RUNNING"):
+                return
+            time.sleep(3)
+        raise TimeoutError(f"{NAME} not RUNNING after {timeout} s")
+
     def apply(self, cfg, timeout=900):
         """In-place update; seconds from the command until /models shows the new route and registry."""
         route = next(d for d in cfg["applications"][0]["deployments"] if d["name"] == "Viewer")["user_config"]["route"]
@@ -81,9 +91,12 @@ class Service:
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
             yaml.safe_dump(cfg, f, sort_keys=False)
         try:
+            self.wait_running()   # Anyscale refuses a deploy while the previous update is still in progress
             t0 = time.time()
-            subprocess.run(["anyscale", "service", "deploy", "-f", f.name, "--in-place"], check=True,
-                           cwd=ROOT, capture_output=True, text=True)
+            r = subprocess.run(["anyscale", "service", "deploy", "-f", f.name, "--in-place"],
+                               cwd=ROOT, capture_output=True, text=True)
+            if r.returncode:
+                raise RuntimeError(f"anyscale service deploy failed: {(r.stderr or r.stdout)[-800:]}")
             while time.time() - t0 < timeout:
                 try:
                     m = self.models()
