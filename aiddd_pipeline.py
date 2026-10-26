@@ -120,6 +120,9 @@ MODELS = {
     "of3ray": ("OF3 fine-tuned with Ray Train", None),   # your own weights from finetune_ray_train.py
 }
 FINETUNE_RUNS = SHARED / "finetune" / "runs"
+# Our fine-tune for the Serve demo: OF3-p2 145k on 66 EV-A71 fragments, 1,000 steps on 8 L4s
+OF3_OURS_CKPT = (FINETUNE_RUNS / "ft-p2-evfrag-1000s-8g-1023-0139"
+                 / "checkpoint_2026-10-23_04-05-55.886640" / "of3_ev71_ft.pt")
 
 
 def latest_finetune_ckpt() -> Optional[Path]:

@@ -61,11 +61,13 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
  details{font-size:13px;line-height:1.45;margin:0 0 12px;padding:8px 10px;background:#f6f7f9;border-radius:6px}
  summary{cursor:pointer;font-weight:600} details dt{font-weight:600;margin-top:8px} details dd{margin:2px 0 0 0;color:#333}
  th[title]{cursor:help;text-decoration:underline dotted} #lread{font-size:12px;color:#444;margin-top:4px;line-height:1.4}
+ #hist table{margin-top:8px;font-size:12px} #hist tr:hover{background:none;cursor:default}
+ #hist .new td{background:#eef7f0} #hist .ver{font-family:ui-monospace,monospace;font-size:11px;color:#556}
 </style></head><body>
 <div id="list">
 <form id="live" onsubmit="predict(event)"><h2>Live prediction</h2>
  <input id="smi" placeholder="SMILES, e.g. CNC(=O)c1nn(C)c2ccccc12" style="width:100%;box-sizing:border-box;padding:5px">
- <button style="margin:6px 0">Predict</button> <span id="lstat"></span><div id="lread"></div></form>
+ <button style="margin:6px 0">Predict</button> <span id="lstat"></span><div id="lread"></div><div id="hist"></div></form>
 <details><summary>How to read this page</summary><dl>
  <dt>The question</dt><dd>Each row is an X-ray crystal structure of a compound bound to the EV-A71 2A protease. The model
   received only the protein sequence and the compound's SMILES string; the crystal structure is the answer key.</dd>
@@ -143,6 +145,7 @@ async function predict(ev){
   st.innerHTML = `pose: ${j.pose_model} (${j.models.pose.version}), ipTM <b>${f(iptm)}</b>` +
     (key && key.lig_rmsd !== null ? ` &middot; RMSD <b>${f(key.lig_rmsd)}</b> &Aring;` : "") +
     ` &middot; affinity <b>${f(m.affinity_pred_value)}</b> (log10 IC50, &micro;M) &middot; P(binder) <b>${f(m.affinity_probability_binary)}</b> &middot; ${j.seconds.toFixed(0)} s`;
+  record(smi, j);
   document.getElementById("cur").textContent = `live (${j.pose_model}): ${smi}`;
   viewer.clear(); viewer.addModel(j.cif, j.format || "cif");
   viewer.setStyle({model:0},{cartoon:{color:"#cfd8dc",opacity:0.6}});
@@ -152,6 +155,23 @@ async function predict(ev){
       viewer.setStyle({model:1},{});
       viewer.setStyle({model:1,resn:"LIG"},{stick:{color:"#f28c28",radius:0.25}}); } }
   viewer.zoomTo({chain:"B"}); viewer.render();
+}
+// Every live answer for the molecule on screen, oldest first. After an in-place update the
+// same SMILES is answered by the new model version: its row is highlighted under the old one.
+// Kept in the page only: reload it to start the demo clean.
+const answers = [];
+function record(smi, j){
+  const key = j.answer_key, last = answers.filter(h => h.smi === smi).pop();
+  const version = j.models.pose.version;
+  if (!last || last.version !== version)
+    answers.push({smi, version, name: j.pose_model, iptm: j.pose_iptm, aff: j.metrics.affinity_pred_value,
+                  rmsd: key && key.lig_rmsd !== null ? key.lig_rmsd : null});
+  const rows = answers.filter(h => h.smi === smi), f = v => (typeof v === "number" ? v.toFixed(2) : "n/a");
+  document.getElementById("hist").innerHTML = rows.length < 2 ? "" :
+    `<table><tr><th>Answered by</th><th>RMSD (&Aring;)</th><th>ipTM</th><th>Affinity</th></tr>` +
+    rows.map((h, i) => `<tr class="${i === rows.length - 1 ? "new" : ""}"><td>${h.name}<br><span class="ver">version ${h.version}</span></td>` +
+      `<td class="${h.rmsd !== null && h.rmsd < 2 ? "good" : ""}">${f(h.rmsd)}</td><td>${f(h.iptm)}</td><td>${f(h.aff)}</td></tr>`).join("") +
+    `</table>`;
 }
 const first = document.querySelector("tr[data-cid]"); if(first) show(first.dataset.cid);
 </script></body></html>"""

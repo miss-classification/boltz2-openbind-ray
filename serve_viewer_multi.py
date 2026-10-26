@@ -33,7 +33,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from ray import serve
 from ray.serve.handle import DeploymentHandle
 
-from aiddd_pipeline import (OF3_FT_CKPT, OF3_P2_CKPT, TARGETS, OF3Predictor,
+from aiddd_pipeline import (OF3_FT_CKPT, OF3_OURS_CKPT, OF3_P2_CKPT, TARGETS, OF3Predictor,
                             pose_in_crystal_frame, relocate_paths, score_pose)
 # Read-only reuse of the dry-run app's pure helpers and the affinity deployment.
 from serve_viewer import Boltz2Live, canonical, predict_one
@@ -48,7 +48,9 @@ RESULTS = Path(os.environ.get("AIDDD_RESULTS", SHARED / "results" / "ev71-2a"))
 DEFAULT_MODELS = {
     "base":   {"name": "Base model: OF3-p2 145k", "checkpoint": str(OF3_P2_CKPT),
                 "legacy": True, "samples": 1},
-    "ev71-v2": {"name": "EV-A71 specialist v2: public fine-tune", "checkpoint": str(OF3_FT_CKPT),
+    "ev71-v1": {"name": "EV-A71 specialist v1: our Ray Train fine-tune", "checkpoint": str(OF3_OURS_CKPT),
+                "legacy": True, "samples": 1},
+    "ev71-v2":{"name": "EV-A71 specialist v2: public fine-tune", "checkpoint": str(OF3_FT_CKPT),
                 "legacy": True, "samples": 1},
 }
 # program -> the model id its chemists get now. Promotion = repoint a route.
