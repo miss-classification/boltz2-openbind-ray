@@ -4,10 +4,10 @@ Overnight work on HANDOFF_oct26.md (night of Oct 25 to 26). Every number comes f
 This copy lives on the branch for review; delete it before merging to main.
 
 Commits: 4f6af6e..(this file's commit) on geoff/serve-multiplex-live
-Service: https://aiddd-viewer-5ms2e.cld-g54aiirwj1s8t9kt.s.anyscaleuserdata.com, deployed from cbe96b1 (version
-bsqwk14c), demo_1 applied: yes (route `base`, `allow_fresh` off), caches warm: yes (all 18 demo poses answer from
-the pose cache; both Viewer replicas have scored them). Later commits change only notebooks, Markdown and
-scripts/, which the Service does not upload.
+Service: https://aiddd-viewer-5ms2e.cld-g54aiirwj1s8t9kt.s.anyscaleuserdata.com, deployed from fe1ddd9 (version
+324t1b8w, Oct 26 morning), demo_1 applied: yes (the page shows "demo_1: base model only"; route `base`,
+`allow_fresh` off), caches warm: yes (all 18 demo poses answer from the pose cache; load_room.py twice after the
+reset: 0 errors, P99 0.29 and 0.34 s). Later commits change only Markdown, which the Service does not upload.
 
 ## Before Tuesday morning
 
@@ -17,6 +17,28 @@ scripts/, which the Service does not upload.
 3. Edit no `.py` file between the deploy and the demo steps. Notebooks, Markdown, `scripts/` and `jobs/` are
    excluded from the upload, so editing them is safe.
 4. Share the Service URL (above) with the room as `AIDDD_SERVICE_URL` (README, Workshop format).
+
+## Morning review round (Oct 26)
+
+- **Demo step on the viewer page.** Each jobs/demo_*.yaml sets a `step` label in the Viewer's user_config; the page
+  shows it under "Live prediction" (orange "Not on a demo step" after a plain deploy); /models returns it.
+- **03 §6.6 runs the in-place steps from cells**, as plain Anyscale CLI lines (`!anyscale service deploy -f
+  jobs/demo_2_ft.yaml --in-place`), gated on a new `PRESENTER = False` flag in Setup (not `USE_GPUS`). After each
+  deploy the cell polls /models until the new route answers; `anyscale service wait --state RUNNING` runs only at
+  the start of the demo_3 cell. Service answers are read only when `r.ok`.
+- Verified on version 324t1b8w (Oct 26 ~06:4x), notebook executed end to end, 0 errors:
+  - presenter (`PRESENTER = True`, `USE_GPUS = False`): demo_2 cell 24.5 s (deploy, route answers, x7259a v1 1.0 Å
+    from cache); demo_3 cell 69.9 s, of which 52 s was the `service wait` because demo_2 had been applied 30 s
+    earlier (on stage, with talk in between, the wait is shorter or zero)
+  - attendee (both flags off): no deploys; §6 and 6.6 answer from the Service
+  - in-place demo_1, timed from the command until the page shows the step: 34 s and 25 s
+- Fixed: serve_viewer.py's per-model memory comment (about 3 GB: 8.5 / 11.5 / 14.6 GB); the README viewer section
+  (pose from OpenFold3, affinity from Boltz-2, 1 to 2 minutes for a new molecule, front end 2 to 4 replicas). The
+  README had no "about 30 s"; the viewer page's "about 30 s" was fixed earlier (now "about 25 s").
+- **Open question for the talk track:** with `PRESENTER = True` and `USE_GPUS = False`, 6.4 and 6.5 run before the
+  6.6 deploys and print "ev71-v1 is not deployed yet", as they do for the room. Either that is the intended beat,
+  or the deploy lines should move into 6.4 and 6.5.
+- Before merging to main: remove RESULTS.md and HANDOFF_oct26.md.
 
 ## Done / skipped / not done
 
