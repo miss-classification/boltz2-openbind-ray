@@ -37,7 +37,7 @@ import requests
 from ray import serve
 from ray.dashboard.modules.serve.sdk import ServeSubmissionClient
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # the repository root
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # the repository root
 from aiddd_pipeline import LIVE_MODELS  # noqa: E402
 
 APP, PREFIX = "aiddd-check", "/check"
@@ -52,11 +52,30 @@ def deploy(model_ids, route, timeout=1800):
     Viewer serves that route. On a running app this changes only user_config."""
     models = {i: LIVE_MODELS[i] for i in model_ids}
     # The code this driver uploaded (a gcs:// package) and its pip packages, as the app's runtime_env
-    env = {k: v for k, v in ray.get_runtime_context().runtime_env.items() if k in ("working_dir", "pip", "env_vars")}
-    ServeSubmissionClient(DASHBOARD).deploy_applications({"applications": [{
-        "name": APP, "route_prefix": PREFIX, "import_path": "serve_viewer:app", "runtime_env": env,
-        "deployments": [{"name": "OF3Pool", "user_config": {"models": models}},
-                        {"name": "Viewer", "user_config": {"route": route, "allow_fresh": True}}]}]})
+    env = {
+        k: v
+        for k, v in ray.get_runtime_context().runtime_env.items()
+        if k in ("working_dir", "pip", "env_vars")
+    }
+    ServeSubmissionClient(DASHBOARD).deploy_applications(
+        {
+            "applications": [
+                {
+                    "name": APP,
+                    "route_prefix": PREFIX,
+                    "import_path": "serve_viewer:app",
+                    "runtime_env": env,
+                    "deployments": [
+                        {"name": "OF3Pool", "user_config": {"models": models}},
+                        {
+                            "name": "Viewer",
+                            "user_config": {"route": route, "allow_fresh": True},
+                        },
+                    ],
+                }
+            ]
+        }
+    )
     t0 = time.time()
     while time.time() - t0 < timeout:
         try:
@@ -66,15 +85,23 @@ def deploy(model_ids, route, timeout=1800):
         except Exception:
             pass
         time.sleep(5)
-    raise TimeoutError(f"app not serving route {route} with {model_ids} after {timeout} s")
+    raise TimeoutError(
+        f"app not serving route {route} with {model_ids} after {timeout} s"
+    )
 
 
 def predict(smiles, model=None, fresh=False):
     t0 = time.time()
-    r = requests.post(f"{URL}/predict", json={"smiles": smiles, "model": model, "fresh": fresh}, timeout=900)
+    r = requests.post(
+        f"{URL}/predict",
+        json={"smiles": smiles, "model": model, "fresh": fresh},
+        timeout=900,
+    )
     body = r.json()
     assert r.status_code == 200, body
-    assert body["cif"].startswith(("data_", "HEADER", "ATOM", "REMARK", "CRYST1", "MODEL")), body["cif"][:80]
+    assert body["cif"].startswith(
+        ("data_", "HEADER", "ATOM", "REMARK", "CRYST1", "MODEL")
+    ), body["cif"][:80]
     body["wall"] = time.time() - t0
     return body
 
@@ -82,18 +109,29 @@ def predict(smiles, model=None, fresh=False):
 def show(step, b):
     rmsd = (b.get("answer_key") or {}).get("lig_rmsd")
     load = f" + {b['load_seconds']:.0f} s load" if b["load_seconds"] else ""
-    print(f"[ok] {step:<34} {b['model_id']:<8} source={b['source']:<7} {b['wall']:5.1f} s wall{load}"
-          f"  RMSD {rmsd if rmsd is None else round(rmsd, 2)}  resident={b['resident']}  zones={b.get('zone')}/{b.get('affinity_zone')}")
+    print(
+        f"[ok] {step:<34} {b['model_id']:<8} source={b['source']:<7} {b['wall']:5.1f} s wall{load}"
+        f"  RMSD {rmsd if rmsd is None else round(rmsd, 2)}  resident={b['resident']}  zones={b.get('zone')}/{b.get('affinity_zone')}"
+    )
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--keep", action="store_true", help="keep the app running after the checks")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--keep", action="store_true", help="keep the app running after the checks"
+    )
     args = ap.parse_args()
 
-    ray.init(runtime_env={"working_dir": str(Path(__file__).resolve().parents[1]),
-                          "excludes": ["image", "docs", ".git", "*.ipynb", "__pycache__"]},
-             ignore_reinit_error=True, logging_level="ERROR")
+    ray.init(
+        runtime_env={
+            "working_dir": str(Path(__file__).resolve().parents[1]),
+            "excludes": ["image", "docs", ".git", "*.ipynb", "__pycache__"],
+        },
+        ignore_reinit_error=True,
+        logging_level="ERROR",
+    )
     t0 = time.time()
     deploy(["base", "ev71-v1"], route="base")
     print(f"[ok] app deployed in {time.time() - t0:.0f} s (includes GPU node startup)")
@@ -111,46 +149,73 @@ def main():
     b = predict(X7608A)
     show("3 base, same molecule again", b)
     assert b["source"] == "cache" and b["wall"] < 10, (b["source"], b["wall"])
-    clr = requests.post(f"{URL}/cache/clear", json={"compound": "x7608a", "model": "base"}, timeout=60).json()
+    clr = requests.post(
+        f"{URL}/cache/clear", json={"compound": "x7608a", "model": "base"}, timeout=60
+    ).json()
     assert clr.get("removed"), clr
     b = predict(X7608A)
     show("3b base, after /cache/clear", b)
     assert b["source"] == "memory", b["source"]
     b = predict(X7608A)
     assert b["source"] == "cache", b["source"]
-    print(f"[ok] {'3c the same again':<34} source=cache: the live answer was cached again")
+    print(
+        f"[ok] {'3c the same again':<34} source=cache: the live answer was cached again"
+    )
     b = predict(X7259A, model="ev71-v1", fresh=True)
     show("4 ev71-v1, a second model id", b)
-    assert b["source"] == "loaded" and sorted(b["resident"]) == ["base", "ev71-v1"], b["resident"]
+    assert b["source"] == "loaded" and sorted(b["resident"]) == ["base", "ev71-v1"], b[
+        "resident"
+    ]
 
     t0 = time.time()
     status = deploy(["base", "ev71-v1", "ev71-v2"], route="ev71-v2")
-    print(f"[ok] {'5 in-place update':<34} {time.time() - t0:.0f} s; route={status['route']} "
-          f"resident={status['resident']} memory={status['replica_memory_gb']} GB")
+    print(
+        f"[ok] {'5 in-place update':<34} {time.time() - t0:.0f} s; route={status['route']} "
+        f"resident={status['resident']} memory={status['replica_memory_gb']} GB"
+    )
     assert status["route"] == "ev71-v2" and "ev71-v2" in status["registry"], status
-    assert sorted(status["resident"]) == ["base", "ev71-v1"], "the update restarted the pool replica"
+    assert sorted(status["resident"]) == [
+        "base",
+        "ev71-v1",
+    ], "the update restarted the pool replica"
 
     b = predict(X7259A, fresh=True)
     show("6 ev71-v2 by route, a third model", b)
     assert b["model_id"] == "ev71-v2" and b["source"] == "loaded", b
     assert sorted(b["resident"]) == ["base", "ev71-v1", "ev71-v2"], b["resident"]
     status = requests.get(f"{URL}/models", timeout=60).json()
-    print(f"[ok] pool with 3 resident: memory={status['replica_memory_gb']} GB, zone={status.get('zone')}")
+    print(
+        f"[ok] pool with 3 resident: memory={status['replica_memory_gb']} GB, zone={status.get('zone')}"
+    )
 
     status = deploy(["base"], route="base")
-    print(f"[ok] {'7 reset to step 1 (base only)':<34} resident={status['resident']} memory={status['replica_memory_gb']} GB")
-    assert status["resident"] == ["base"], "ev71-v1 and ev71-v2 left the registry and should be freed"
-    gone = requests.post(f"{URL}/predict", json={"smiles": X7259A, "model": "ev71-v2"}, timeout=900)
-    assert gone.status_code == 404 and "unknown model id" in gone.text, (gone.status_code, gone.text[:300])
+    print(
+        f"[ok] {'7 reset to step 1 (base only)':<34} resident={status['resident']} memory={status['replica_memory_gb']} GB"
+    )
+    assert status["resident"] == [
+        "base"
+    ], "ev71-v1 and ev71-v2 left the registry and should be freed"
+    gone = requests.post(
+        f"{URL}/predict", json={"smiles": X7259A, "model": "ev71-v2"}, timeout=900
+    )
+    assert gone.status_code == 404 and "unknown model id" in gone.text, (
+        gone.status_code,
+        gone.text[:300],
+    )
     print(f"[ok] {'  ev71-v2 by id after the reset':<34} rejected: not registered")
     b = predict(X7259A)
     show("8 base, cached, after the reset", b)
     assert b["model_id"] == "base" and b["source"] == "cache", b["source"]
     b = predict(X7259A, fresh=True)
     show("9 base, fresh, after the reset", b)
-    assert b["source"] == "memory" and b["resident"] == ["base"], (b["source"], b["resident"])
+    assert b["source"] == "memory" and b["resident"] == ["base"], (
+        b["source"],
+        b["resident"],
+    )
 
-    bad = requests.post(f"{URL}/predict", json={"smiles": "not-a-molecule"}, timeout=900)
+    bad = requests.post(
+        f"{URL}/predict", json={"smiles": "not-a-molecule"}, timeout=900
+    )
     assert bad.status_code in (400, 422), bad.status_code
     print(f"[ok] invalid SMILES rejected with HTTP {bad.status_code}")
 

@@ -35,14 +35,24 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from ray import serve
 from ray.serve.handle import DeploymentHandle
 
-from aiddd_pipeline import LIVE_MODELS, OF3_LEGACY_PY, pose_in_crystal_frame, relocate_paths, score_pose
+from aiddd_pipeline import (
+    LIVE_MODELS,
+    OF3_LEGACY_PY,
+    pose_in_crystal_frame,
+    relocate_paths,
+    score_pose,
+)
 from of3_live import LiveModel, cached_answer, node_zone, predict_one
 
 SHARED = Path(os.environ.get("AIDDD_SHARED", "/mnt/shared_storage/aiddd"))
 RESULTS = Path(os.environ.get("AIDDD_RESULTS", SHARED / "results" / "ev71-2a"))
 STRUCTURES = SHARED / "raw" / "OpenBind_EV-A71_2A" / "structures"
-MODELS = {"boltz2": "Boltz-2", "openbind0": "OpenBind-0", "of3ft": "OF3 fine-tuned",
-          "of3ray": "OF3 Ray Train fine-tune"}
+MODELS = {
+    "boltz2": "Boltz-2",
+    "openbind0": "OpenBind-0",
+    "of3ft": "OF3 fine-tuned",
+    "of3ray": "OF3 Ray Train fine-tune",
+}
 
 api = FastAPI()
 
@@ -224,6 +234,7 @@ const first = document.querySelector("tr[data-cid]"); if(first) show(first.datas
 def canonical(smiles: str):
     """RDKit canonical SMILES, so one molecule written two ways still finds its crystal."""
     from rdkit import Chem, RDLogger
+
     RDLogger.DisableLog("rdApp.*")
     mol = Chem.MolFromSmiles(smiles)
     return Chem.MolToSmiles(mol) if mol is not None else None
@@ -232,7 +243,9 @@ def canonical(smiles: str):
 def live_cache(pred, version: str) -> Path:
     """One cache folder per model version, so a new model never returns an old model's
     cached poses. "base" keeps the original folder."""
-    out = pred.t.pred_root / (pred.key if version == "base" else f"{pred.key}_{version}")
+    out = pred.t.pred_root / (
+        pred.key if version == "base" else f"{pred.key}_{version}"
+    )
     out.mkdir(parents=True, exist_ok=True)
     return out
 
@@ -247,13 +260,18 @@ def live_cache(pred, version: str) -> Path:
 # Ray 2.59 runs a sync method on the replica's event loop, so a minute-long prediction there would
 # hold up every other request. These deployments answer cached poses straight from disk, and run a
 # live prediction in a thread, one at a time per replica.
-@serve.deployment(ray_actor_options={"num_gpus": 0.5, "accelerator_type": "L4"},
-                  # 1 replica: two live Boltz-2 predictions on one 32 GB node would not fit either;
-                  # cached affinities need no second replica
-                  autoscaling_config={"min_replicas": 1, "max_replicas": 1,
-                                      "target_ongoing_requests": 1},
-                  max_ongoing_requests=32,
-                  user_config={"version": "base", "checkpoint": None})
+@serve.deployment(
+    ray_actor_options={"num_gpus": 0.5, "accelerator_type": "L4"},
+    # 1 replica: two live Boltz-2 predictions on one 32 GB node would not fit either;
+    # cached affinities need no second replica
+    autoscaling_config={
+        "min_replicas": 1,
+        "max_replicas": 1,
+        "target_ongoing_requests": 1,
+    },
+    max_ongoing_requests=32,
+    user_config={"version": "base", "checkpoint": None},
+)
 class Boltz2Live:
     """Boltz-2 affinity (and its own pose). Same predictor class as the batch pipeline."""
 
@@ -261,7 +279,7 @@ class Boltz2Live:
         from aiddd_pipeline import Boltz2Predictor
 
         class LivePredictor(Boltz2Predictor):
-            key = "live"   # cache under predictions/live/, separate from the benchmark
+            key = "live"  # cache under predictions/live/, separate from the benchmark
 
         self.pred = LivePredictor()
         self.gpu = asyncio.Lock()
@@ -269,11 +287,16 @@ class Boltz2Live:
 
     def reconfigure(self, cfg: dict):
         """checkpoint: a Boltz-2 structure checkpoint (`boltz predict --checkpoint`); None is
-        the released boltz2_conf.ckpt. Affinity always uses the released affinity checkpoint."""
+        the released boltz2_conf.ckpt. Affinity always uses the released affinity checkpoint.
+        """
         ckpt = cfg.get("checkpoint")
         self.pred.extra_args = ["--checkpoint", ckpt] if ckpt else []
         self.pred.out = live_cache(self.pred, cfg["version"])
-        self.model = {"name": cfg.get("name", MODELS["boltz2"]), "version": cfg["version"], "checkpoint": ckpt}
+        self.model = {
+            "name": cfg.get("name", MODELS["boltz2"]),
+            "version": cfg["version"],
+            "checkpoint": ckpt,
+        }
 
     async def __call__(self, smiles: str) -> dict:
         out = await asyncio.to_thread(cached_answer, self.pred.out, smiles)
@@ -291,13 +314,21 @@ class Boltz2Live:
 MAX_RESIDENT = 3
 
 
-@serve.deployment(ray_actor_options={"num_gpus": 0.5, "accelerator_type": "L4",
-                                     # OF3-p2 checkpoints only load in OpenFold3 0.4.x
-                                     "runtime_env": {"py_executable": OF3_LEGACY_PY}},
-                  autoscaling_config={"min_replicas": 1, "max_replicas": 1,
-                                      "target_ongoing_requests": 1},
-                  max_ongoing_requests=32,
-                  user_config={"models": LIVE_MODELS})
+@serve.deployment(
+    ray_actor_options={
+        "num_gpus": 0.5,
+        "accelerator_type": "L4",
+        # OF3-p2 checkpoints only load in OpenFold3 0.4.x
+        "runtime_env": {"py_executable": OF3_LEGACY_PY},
+    },
+    autoscaling_config={
+        "min_replicas": 1,
+        "max_replicas": 1,
+        "target_ongoing_requests": 1,
+    },
+    max_ongoing_requests=32,
+    user_config={"models": LIVE_MODELS},
+)
 class OF3Pool:
     """OpenFold3 poses from many checkpoints in one deployment: Ray Serve model multiplexing.
 
@@ -309,12 +340,13 @@ class OF3Pool:
 
     def __init__(self):
         self.models, self.loaded = {}, {}
-        self.gpu = asyncio.Lock()   # OpenFold3 runs one prediction at a time per replica
+        self.gpu = asyncio.Lock()  # OpenFold3 runs one prediction at a time per replica
         self.zone = node_zone()
 
     async def reconfigure(self, cfg: dict):
         """A new registry. Weights whose id left it, or now names other weights, are freed at once;
-        Ray Serve still caches the id, so a later request for it loads it again in __call__."""
+        Ray Serve still caches the id, so a later request for it loads it again in __call__.
+        """
         async with self.gpu:
             self.models = cfg["models"]
             for model_id, model in self.loaded.items():
@@ -334,72 +366,132 @@ class OF3Pool:
         """fresh: ignore the cached pose, so the model really runs."""
         model_id = serve.get_multiplexed_model_id()
         if model_id not in self.models:
-            raise KeyError(f"unknown model id {model_id!r}; registered: {sorted(self.models)}")
+            raise KeyError(
+                f"unknown model id {model_id!r}; registered: {sorted(self.models)}"
+            )
         spec = self.models[model_id]
         cached = lambda: asyncio.to_thread(cached_answer, self.cache_dir(spec), smiles)
-        if not fresh and (out := await cached()) is not None:   # no model, no GPU, no waiting
-            return {**out, "model": dict(spec), "model_id": model_id, "resident": self.resident(), "zone": self.zone}
+        if (
+            not fresh and (out := await cached()) is not None
+        ):  # no model, no GPU, no waiting
+            return {
+                **out,
+                "model": dict(spec),
+                "model_id": model_id,
+                "resident": self.resident(),
+                "zone": self.zone,
+            }
         model = await self.load(model_id)
         async with self.gpu:
             # Requests that waited here while another computed the same pose take its answer
             if not fresh and (out := await cached()) is not None:
-                return {**out, "model": dict(spec), "model_id": model_id, "resident": self.resident(), "zone": self.zone}
-            if not model.resident:   # freed by reconfigure(): load this id's current weights
+                return {
+                    **out,
+                    "model": dict(spec),
+                    "model_id": model_id,
+                    "resident": self.resident(),
+                    "zone": self.zone,
+                }
+            if (
+                not model.resident
+            ):  # freed by reconfigure(): load this id's current weights
                 await asyncio.to_thread(model.load, self.models[model_id])
             out = await asyncio.to_thread(model, smiles, fresh)
-        return {**out, "model_id": model_id, "resident": self.resident(), "zone": self.zone}
+        return {
+            **out,
+            "model_id": model_id,
+            "resident": self.resident(),
+            "zone": self.zone,
+        }
 
     @staticmethod
     def cache_dir(spec: dict) -> Path:
         """A model version's pose cache folder (the one LiveModel writes): the spec's pose_cache, or
         predictions/live_of3ft_<version>."""
         from aiddd_pipeline import TARGETS
-        return Path(spec.get("pose_cache") or TARGETS["ev71-2a"].pred_root / f"live_of3ft_{spec['version']}")
+
+        return Path(
+            spec.get("pose_cache")
+            or TARGETS["ev71-2a"].pred_root / f"live_of3ft_{spec['version']}"
+        )
 
     async def clear_cache(self, model_id: str, smiles: str) -> dict:
         """Delete one molecule's cached pose for one model id: its next request runs the model live."""
         import hashlib
+
         if model_id not in self.models:
-            raise KeyError(f"unknown model id {model_id!r}; registered: {sorted(self.models)}")
+            raise KeyError(
+                f"unknown model id {model_id!r}; registered: {sorted(self.models)}"
+            )
         lig_id = "smi_" + hashlib.sha1(smiles.encode()).hexdigest()[:12]
         cache = self.cache_dir(self.models[model_id])
         removed = []
-        for f in (cache / f"{lig_id}.json", cache / f"{lig_id}.cif"):   # .json first: _cached needs both
+        for f in (
+            cache / f"{lig_id}.json",
+            cache / f"{lig_id}.cif",
+        ):  # .json first: _cached needs both
             if f.exists():
                 f.unlink()
                 removed.append(f.name)
-        return {"model_id": model_id, "version": self.models[model_id]["version"], "removed": removed}
+        return {
+            "model_id": model_id,
+            "version": self.models[model_id]["version"],
+            "removed": removed,
+        }
 
     def resident(self) -> list:
         """Model ids this replica holds in memory now."""
         return [i for i, m in self.loaded.items() if m.resident]
 
     async def status(self) -> dict:
-        rss = int(open("/proc/self/statm").read().split()[1]) * resource.getpagesize() / 1e9
-        return {"registry": {i: {k: v for k, v in m.items() if k != "checkpoint"} for i, m in self.models.items()},
-                "resident": self.resident(), "max_resident": MAX_RESIDENT, "replica_memory_gb": round(rss, 1),
-                "zone": self.zone}
+        rss = (
+            int(open("/proc/self/statm").read().split()[1])
+            * resource.getpagesize()
+            / 1e9
+        )
+        return {
+            "registry": {
+                i: {k: v for k, v in m.items() if k != "checkpoint"}
+                for i, m in self.models.items()
+            },
+            "resident": self.resident(),
+            "max_resident": MAX_RESIDENT,
+            "replica_memory_gb": round(rss, 1),
+            "zone": self.zone,
+        }
 
 
-@serve.deployment(ray_actor_options={"num_cpus": 1},
-                  # 2 from the start: a room arrives faster than autoscaling reacts
-                  autoscaling_config={"min_replicas": 2, "max_replicas": 4, "target_ongoing_requests": 16},
-                  max_ongoing_requests=100,   # requests wait here on GPU calls; Ray Serve's default is 5
-                  user_config={"route": "ev71-v2", "allow_fresh": False})
+@serve.deployment(
+    ray_actor_options={"num_cpus": 1},
+    # 2 from the start: a room arrives faster than autoscaling reacts
+    autoscaling_config={
+        "min_replicas": 2,
+        "max_replicas": 4,
+        "target_ongoing_requests": 16,
+    },
+    max_ongoing_requests=100,  # requests wait here on GPU calls; Ray Serve's default is 5
+    user_config={"route": "ev71-v2", "allow_fresh": False},
+)
 @serve.ingress(api)
 class Viewer:
     def __init__(self, live: DeploymentHandle, pool: DeploymentHandle):
-        self.live = live   # Boltz-2: affinity
-        self.pool = pool   # OpenFold3: poses, multiplexed by model id
-        self.scored = {}   # (pose file, mtime, crystal) -> RMSD and aligned pose
+        self.live = live  # Boltz-2: affinity
+        self.pool = pool  # OpenFold3: poses, multiplexed by model id
+        self.scored = {}  # (pose file, mtime, crystal) -> RMSD and aligned pose
         # File by file: a column that is all null in one file and numeric in another
         # will not merge as one Parquet dataset.
-        self.df = relocate_paths(pd.concat([pd.read_parquet(f) for f in sorted(RESULTS.glob("*.parquet"))],
-                                           ignore_index=True))
+        self.df = relocate_paths(
+            pd.concat(
+                [pd.read_parquet(f) for f in sorted(RESULTS.glob("*.parquet"))],
+                ignore_index=True,
+            )
+        )
         self.models = [k for k in MODELS if f"{k}_lig_rmsd" in self.df]
         # Canonical SMILES -> first crystal of that compound: the answer key for live predictions
         self.known = {}
-        for r in self.df.dropna(subset=["smiles"]).sort_values("complex_name").itertuples():
+        for r in (
+            self.df.dropna(subset=["smiles"]).sort_values("complex_name").itertuples()
+        ):
             if (c := canonical(r.smiles)) is not None:
                 self.known.setdefault(c, r)
 
@@ -407,10 +499,13 @@ class Viewer:
         """route: the model id that answers this program's requests. Repointing it is how a
         new version goes live. A /predict request can name another id.
         allow_fresh: honor "fresh" (run the model even when the pose is cached). Off for a
-        shared room: 40 fresh requests on one OpenFold3 replica would queue for half an hour."""
+        shared room: 40 fresh requests on one OpenFold3 replica would queue for half an hour.
+        """
         self.route = cfg["route"]
         self.allow_fresh = cfg.get("allow_fresh", False)
-        self.step = cfg.get("step", "")   # the demo step that set this config (jobs/demo_*.yaml)
+        self.step = cfg.get(
+            "step", ""
+        )  # the demo step that set this config (jobs/demo_*.yaml)
 
     def answer_key(self, row, cif_path: str) -> dict:
         """For a molecule with a crystal structure: the live pose's ligand RMSD to that crystal,
@@ -426,18 +521,31 @@ class Viewer:
 
     def _score(self, row, cif_path: str) -> dict:
         ref_pdb = Path(row.ref_pdb)
-        ref_sdf = ref_pdb.with_name(ref_pdb.name.replace("_complex_ref.pdb", "_ligand_ref.sdf"))
+        ref_sdf = ref_pdb.with_name(
+            ref_pdb.name.replace("_complex_ref.pdb", "_ligand_ref.sdf")
+        )
         try:
             rmsd, _ = score_pose(cif_path, ref_pdb, ref_sdf, {})
-            return {"answer_key": {"complex": row.complex_name, "lig_rmsd": float(rmsd)},
-                    "cif": pose_in_crystal_frame(cif_path, ref_pdb), "format": "pdb"}
+            return {
+                "answer_key": {"complex": row.complex_name, "lig_rmsd": float(rmsd)},
+                "cif": pose_in_crystal_frame(cif_path, ref_pdb),
+                "format": "pdb",
+            }
         except Exception as e:
-            return {"answer_key": {"complex": row.complex_name, "lig_rmsd": None, "error": str(e)}}
+            return {
+                "answer_key": {
+                    "complex": row.complex_name,
+                    "lig_rmsd": None,
+                    "error": str(e),
+                }
+            }
 
     @api.get("/", response_class=HTMLResponse)
     def index(self, model: str = ""):
         key = model if model in self.models else self.models[0]
-        df = self.df.dropna(subset=[f"{key}_cif"]).sort_values(f"{key}_lig_rmsd", na_position="last")
+        df = self.df.dropna(subset=[f"{key}_cif"]).sort_values(
+            f"{key}_lig_rmsd", na_position="last"
+        )
         rows = []
         for _, r in df.iterrows():
             rmsd = r[f"{key}_lig_rmsd"]
@@ -446,40 +554,69 @@ class Viewer:
             rows.append(
                 f'<tr data-cid="{r.complex_name}" onclick="show(\'{r.complex_name}\')">'
                 f"<td>{r.complex_name.split('-', 1)[1]}</td><td class='{cls}'>{'' if pd.isna(rmsd) else f'{rmsd:.2f}'}</td>"
-                f"<td>{'fragment' if r.fragment_screen else 'follow-on'}</td><td>{pkd}</td></tr>")
+                f"<td>{'fragment' if r.fragment_screen else 'follow-on'}</td><td>{pkd}</td></tr>"
+            )
         ok = df[f"{key}_lig_rmsd"].dropna()
-        stats = (f"median ligand RMSD {ok.median():.2f} &Aring; &middot; <b>{(ok < 2).mean():.0%} of poses correct</b> (under 2 &Aring;)"
-                 if len(ok) else "not scored yet")
-        tabs = "".join(f'<a class="tab{" on" if k == key else ""}" href="/?model={k}">{MODELS[k]}</a>'
-                       for k in self.models)
-        return (PAGE.replace("__MODEL__", MODELS[key]).replace("__KEY__", key).replace("__N__", str(len(df)))
-                .replace("__TABS__", tabs).replace("__STATS__", stats).replace("__ROWS__", "".join(rows)))
+        stats = (
+            f"median ligand RMSD {ok.median():.2f} &Aring; &middot; <b>{(ok < 2).mean():.0%} of poses correct</b> (under 2 &Aring;)"
+            if len(ok)
+            else "not scored yet"
+        )
+        tabs = "".join(
+            f'<a class="tab{" on" if k == key else ""}" href="/?model={k}">{MODELS[k]}</a>'
+            for k in self.models
+        )
+        return (
+            PAGE.replace("__MODEL__", MODELS[key])
+            .replace("__KEY__", key)
+            .replace("__N__", str(len(df)))
+            .replace("__TABS__", tabs)
+            .replace("__STATS__", stats)
+            .replace("__ROWS__", "".join(rows))
+        )
 
     @api.post("/predict")
     async def predict(self, body: dict):
         smiles = str(body.get("smiles", "")).strip()
         if not smiles or len(smiles) > 300:
-            return JSONResponse({"status": "failed", "error": "need a SMILES under 300 chars"}, 400)
+            return JSONResponse(
+                {"status": "failed", "error": "need a SMILES under 300 chars"}, 400
+            )
         model_id = body.get("model") or self.route
-        fresh = bool(body.get("fresh")) and self.allow_fresh   # run the model even if the pose is cached
+        fresh = (
+            bool(body.get("fresh")) and self.allow_fresh
+        )  # run the model even if the pose is cached
         # The pose and affinity models run at the same time, each on its own replica.
         # multiplexed_model_id sends the pose request to a replica that holds that model.
         try:
             aff, pose = await asyncio.gather(
                 self.live.remote(smiles),
-                self.pool.options(multiplexed_model_id=model_id).remote(smiles, fresh))
+                self.pool.options(multiplexed_model_id=model_id).remote(smiles, fresh),
+            )
         except Exception as e:
-            cause = getattr(e, "cause", None) or e     # the replica's own exception, not Ray's wrapper
+            cause = (
+                getattr(e, "cause", None) or e
+            )  # the replica's own exception, not Ray's wrapper
             code = 404 if isinstance(cause, KeyError) else 500
-            return JSONResponse({"status": "failed", "error": f"{type(cause).__name__}: {cause}"[:600]}, code)
+            return JSONResponse(
+                {"status": "failed", "error": f"{type(cause).__name__}: {cause}"[:600]},
+                code,
+            )
         iptm = pose["metrics"].get("ligand_iptm", pose["metrics"].get("iptm"))
-        out = {**pose, "pose_model": pose["model"]["name"], "pose_iptm": iptm,
-               "metrics": aff["metrics"], "affinity_status": aff["status"],
-               "seconds": max(pose["seconds"], aff["seconds"]),
-               "models": {"pose": pose["model"], "affinity": aff["model"]}}
+        out = {
+            **pose,
+            "pose_model": pose["model"]["name"],
+            "pose_iptm": iptm,
+            "metrics": aff["metrics"],
+            "affinity_status": aff["status"],
+            "seconds": max(pose["seconds"], aff["seconds"]),
+            "models": {"pose": pose["model"], "affinity": aff["model"]},
+        }
         out["affinity_zone"] = aff.get("zone")
         c = await asyncio.to_thread(canonical, smiles)
-        if (row := self.known.get(c) if c else None) is not None and pose.get("cif_path"):
+        if (row := self.known.get(c) if c else None) is not None and pose.get(
+            "cif_path"
+        ):
             # RDKit scoring and alignment: in a thread, so the replica keeps serving others
             out.update(await asyncio.to_thread(self.answer_key, row, pose["cif_path"]))
         return JSONResponse(out, 200 if out["status"] in ("ok", "cached") else 422)
@@ -487,27 +624,41 @@ class Viewer:
     @api.post("/cache/clear")
     async def cache_clear(self, body: dict):
         """{"compound": "x7259a" or "smiles": "...", "model": "base" (default: the route)}. Deletes that pose
-        from the cache so the next request computes it live. Affinity (Boltz-2) stays cached."""
+        from the cache so the next request computes it live. Affinity (Boltz-2) stays cached.
+        """
         smiles = str(body.get("smiles") or "").strip()
         if not smiles and body.get("compound"):
-            rows = self.df[self.df.complex_name.str.endswith("-" + str(body["compound"]))].dropna(subset=["smiles"])
+            rows = self.df[
+                self.df.complex_name.str.endswith("-" + str(body["compound"]))
+            ].dropna(subset=["smiles"])
             if rows.empty:
-                return JSONResponse({"error": f"no compound {body['compound']!r} in the results"}, 404)
+                return JSONResponse(
+                    {"error": f"no compound {body['compound']!r} in the results"}, 404
+                )
             smiles = rows.iloc[0].smiles
         if not smiles:
             return JSONResponse({"error": "need a compound or a smiles"}, 400)
         try:
-            out = await self.pool.clear_cache.remote(body.get("model") or self.route, smiles)
+            out = await self.pool.clear_cache.remote(
+                body.get("model") or self.route, smiles
+            )
         except Exception as e:
             cause = getattr(e, "cause", None) or e
-            return JSONResponse({"error": f"{type(cause).__name__}: {cause}"[:400]}, 404 if isinstance(cause, KeyError) else 500)
+            return JSONResponse(
+                {"error": f"{type(cause).__name__}: {cause}"[:400]},
+                404 if isinstance(cause, KeyError) else 500,
+            )
         return {**out, "smiles": smiles}
 
     @api.get("/models")
     async def models_status(self):
         """The registry, the route, and which model ids the OF3Pool replica holds in memory."""
-        return {"route": self.route, "allow_fresh": self.allow_fresh, "step": self.step,
-                **(await self.pool.status.remote())}
+        return {
+            "route": self.route,
+            "allow_fresh": self.allow_fresh,
+            "step": self.step,
+            **(await self.pool.status.remote()),
+        }
 
     @api.get("/structure/pred/{key}/{cid}", response_class=PlainTextResponse)
     def pred(self, key: str, cid: str):
@@ -515,15 +666,22 @@ class Viewer:
         if key not in self.models or row.empty or not row.iloc[0][f"{key}_cif"]:
             return PlainTextResponse("not found", status_code=404)
         cif = row.iloc[0][f"{key}_cif"]
-        try:   # move the prediction onto its crystal, so the two ligands can be compared
-            return PlainTextResponse(pose_in_crystal_frame(cif, row.iloc[0].ref_pdb), headers={"x-format": "pdb"})
+        try:  # move the prediction onto its crystal, so the two ligands can be compared
+            return PlainTextResponse(
+                pose_in_crystal_frame(cif, row.iloc[0].ref_pdb),
+                headers={"x-format": "pdb"},
+            )
         except Exception:
             return PlainTextResponse(Path(cif).read_text(), headers={"x-format": "cif"})
 
     @api.get("/structure/gt/{cid}", response_class=PlainTextResponse)
     def gt(self, cid: str):
         row = self.df[self.df.complex_name == cid]
-        if "ref_pdb" in self.df and not row.empty and Path(row.iloc[0].ref_pdb).exists():
+        if (
+            "ref_pdb" in self.df
+            and not row.empty
+            and Path(row.iloc[0].ref_pdb).exists()
+        ):
             return Path(row.iloc[0].ref_pdb).read_text()
         hits = list(STRUCTURES.glob(f"*/{cid}/{cid}_complex_ref.pdb"))
         if hits:
@@ -537,9 +695,17 @@ def build_app(accelerator: str = "L4"):
     itself, and Boltz-2 (half a GPU) runs on the other. Default registry:
     aiddd_pipeline.LIVE_MODELS; default route: ev71-v2."""
     return Viewer.bind(
-        Boltz2Live.options(ray_actor_options={"num_gpus": 0.5, "accelerator_type": accelerator}).bind(),
-        OF3Pool.options(ray_actor_options={"num_gpus": 1, "accelerator_type": accelerator,
-                                           "runtime_env": {"py_executable": OF3_LEGACY_PY}}).bind())
+        Boltz2Live.options(
+            ray_actor_options={"num_gpus": 0.5, "accelerator_type": accelerator}
+        ).bind(),
+        OF3Pool.options(
+            ray_actor_options={
+                "num_gpus": 1,
+                "accelerator_type": accelerator,
+                "runtime_env": {"py_executable": OF3_LEGACY_PY},
+            }
+        ).bind(),
+    )
 
 
 app = build_app()
