@@ -214,6 +214,24 @@ def show_complex(row, models=("boltz2", "openbind0"), height=420):
     _viewer(shown, legend=title + "<br>" + "".join(chips), height=height, zoom="ligands")
 
 
+def show_live_overlay(row, poses, height=420):
+    """Several live poses of one molecule over its crystal, one color each, like show_complex.
+    poses: [(label, pose_pdb, color, rmsd or None)], each pose already moved onto the crystal
+    (the Service's /predict answer: "cif" with "format": "pdb")."""
+    ref_pdb = Path(row["ref_pdb"])
+    ref_sdf = ref_pdb.with_name(ref_pdb.name.replace("_complex_ref.pdb", "_ligand_ref.sdf"))
+    shown = [{"text": ref_pdb.read_text(), "fmt": "pdb",
+              "styles": [({}, {"cartoon": {"color": "#d6d3ce", "opacity": 0.55}}),
+                         ({"byres": True, "within": {"distance": 5, "sel": {"resn": "LIG"}}, "not": {"resn": "LIG"}},
+                          {"line": {"color": "#9a958c"}})]},
+             {"text": ref_sdf.read_text(), "fmt": "sdf", "styles": [({}, _stick(COLORS["crystal"]))]}]
+    chips = [_chip(COLORS["crystal"], "crystal structure")]
+    for label, pdb, color, rmsd in poses:
+        shown.append({"text": pdb, "fmt": "pdb", "styles": [({"chain": "B"}, _stick(color))]})
+        chips.append(_chip(color, label + ("" if rmsd is None else f"  {rmsd:.1f} Å {'✓' if rmsd < 2 else '✗'}")))
+    _viewer(shown, legend=f"<b>{row['complex_name']}</b><br>" + "".join(chips), height=height, zoom="ligands")
+
+
 def show_analog(cif_path, parent, label="new molecule (Boltz-2, live)", height=420):
     """A live prediction for a new molecule, moved onto the crystal of the compound it was
     made from: does the model keep the parent's binding mode?"""
