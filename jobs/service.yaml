@@ -20,7 +20,7 @@ compute_config:
     instance_type: m5.2xlarge             # the Viewer page and the HTTP proxy
   worker_nodes:
     - name: l4
-      instance_type: g6.2xlarge           # 1x L4: half-GPU replicas of Boltz2Live and OF3Pool share it
+      instance_type: g6.2xlarge           # 1x L4 each: OF3Pool takes one node, Boltz2Live the other
       min_nodes: 2                        # the Service's share of the 16-L4 workshop budget,
       max_nodes: 2                        # already running when the session starts
   enable_cross_zone_scaling: true         # take L4s from any availability zone in the region

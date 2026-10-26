@@ -173,11 +173,24 @@ def main():
                             "wall": b["wall"], "pose_seconds": b["seconds"], "source": b["source"]})
         log("size", out["size"][-1])
 
-    # 5. The demo's in-place updates, with the real configs
+    # 3b. Both GPU models live at once (a compound no cache has): the OF3Pool replica must survive
+    second = ev.sort_values("heavy").iloc[-2]
+    before = s.models()
+    b = s.predict(second.smiles, "ev71-v2", fresh=True)
+    after = s.models()
+    out["both_live"] = {"compound": second.complex_name, "heavy_atoms": int(second.heavy), "wall": b["wall"],
+                        "source": b["source"], "resident_before": before["resident"],
+                        "resident_after": after["resident"], "zone_before": before["zone"], "zone_after": after["zone"],
+                        "survived": after["resident"] == before["resident"] and after["zone"] == before["zone"]}
+    log("both live", out["both_live"])
+
+    # 5. The demo's in-place updates, with the real configs. Load base first (a fresh request), so the
+    # steps show whether a loaded model survives them.
     out["inplace"] = []
+    secs, m = s.apply(with_changes(demo_config("1_base"), allow_fresh=True))
+    s.predict(x, "base", fresh=True)
     secs, m = s.apply(demo_config("1_base"))
     log(f"demo_1 applied ({secs} s), resident {m['resident']}")
-    s.predict(x, "base")
     for step in ("2_ft", "3_next_ft"):
         before = s.models()["resident"]
         secs, m = s.apply(demo_config(step))

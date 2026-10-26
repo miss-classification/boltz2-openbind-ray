@@ -233,13 +233,17 @@ def live_cache(pred, version: str) -> Path:
 # A Serve config (or `anyscale service deploy --in-place`) that changes only user_config
 # calls reconfigure() on the running replicas, with no restart.
 #
-# Half an L4 per replica (about 5 GB for Boltz-2 and 3 GB for OpenFold3 of its 24 GB).
-# build_app() fits the replicas into the two L4s the Service is given.
+# GPU memory is not the limit (about 5 GB for Boltz-2 and 3 GB for OpenFold3 of an L4's 24 GB); host
+# memory is. A live Boltz-2 prediction takes a 32 GB L4 node to about 18 GB, and OF3Pool holds about 15 GB
+# with 3 models loaded: together on one node, Ray's memory monitor stops one of them. build_app() gives
+# each its own node.
 # Ray 2.59 runs a sync method on the replica's event loop, so a minute-long prediction there would
 # hold up every other request. These deployments answer cached poses straight from disk, and run a
 # live prediction in a thread, one at a time per replica.
 @serve.deployment(ray_actor_options={"num_gpus": 0.5, "accelerator_type": "L4"},
-                  autoscaling_config={"min_replicas": 1, "max_replicas": 2,
+                  # 1 replica: two live Boltz-2 predictions on one 32 GB node would not fit either;
+                  # cached affinities need no second replica
+                  autoscaling_config={"min_replicas": 1, "max_replicas": 1,
                                       "target_ongoing_requests": 1},
                   max_ongoing_requests=32,
                   user_config={"version": "base", "checkpoint": None})
@@ -478,13 +482,14 @@ class Viewer:
 
 
 def build_app(accelerator: str = "L4"):
-    """The Viewer composed with the model deployments, on the given GPU type. Two L4s give four
-    half-GPU slots: up to two for Boltz-2 (every request needs its affinity) and one for the
-    OpenFold3 pool. Default registry: aiddd_pipeline.LIVE_MODELS; default route: ev71-v2."""
-    gpu = {"num_gpus": 0.5, "accelerator_type": accelerator}
+    """The Viewer composed with the model deployments, on the given GPU type. OF3Pool asks for a
+    whole GPU, so on the Service's 2 single-GPU nodes it has a node (and its host memory) to
+    itself, and Boltz-2 (half a GPU) runs on the other. Default registry:
+    aiddd_pipeline.LIVE_MODELS; default route: ev71-v2."""
     return Viewer.bind(
-        Boltz2Live.options(ray_actor_options=gpu).bind(),
-        OF3Pool.options(ray_actor_options={**gpu, "runtime_env": {"py_executable": OF3_LEGACY_PY}}).bind())
+        Boltz2Live.options(ray_actor_options={"num_gpus": 0.5, "accelerator_type": accelerator}).bind(),
+        OF3Pool.options(ray_actor_options={"num_gpus": 1, "accelerator_type": accelerator,
+                                           "runtime_env": {"py_executable": OF3_LEGACY_PY}}).bind())
 
 
 app = build_app()
