@@ -50,6 +50,9 @@ OF3_LEGACY_PY = "/opt/of3-legacy/bin/python"          # its Python, for Ray acto
 OF3_FT_CKPT = OF3_CACHE / "of3p2-ft-ev2a.ckpt"
 OF3_FT_URL = ("https://openfold3-data.s3.amazonaws.com/openfold3-parameters/"
               "openbind/of3p2-ft-ev2a.ckpt")
+# The EMA weights of OF3_FT_CKPT alone, the only part inference reads: 2.3 GB instead of 6.7 GB,
+# so serving it loads like OF3_P2_CKPT. Made once from OF3_FT_CKPT (ckpt["ema"]["params"]).
+OF3_FT_WEIGHTS = OF3_CACHE / "of3p2-ft-ev2a-weights.pt"
 OF3_P2_CKPT = OF3_CACHE / "of3-p2-145k.pt"   # OF3-p2, the starting weights of of3ft
 OF3_P2_URL = "https://openfold3-data.s3.amazonaws.com/openfold3-parameters/of3-p2-145k.pt"
 PRED_ROOT = SHARED / "predictions"
@@ -143,7 +146,7 @@ LIVE_MODELS = {
     "ev71-v2": {
         "version": "ev71-v2", 
         "name": "EV-A71 specialist v2: public fine-tune (8 GPUs, 1,000 steps)",
-        "checkpoint": str(OF3_FT_CKPT),
+        "checkpoint": str(OF3_FT_WEIGHTS),  # was OF3_FT_CKPT: same model
         "pose_cache": str(SHARED / "predictions" / "live_of3ft_ev71-v2"),
     },
 }
