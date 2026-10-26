@@ -344,14 +344,13 @@ class OF3Pool:
         self.zone = node_zone()
 
     async def reconfigure(self, cfg: dict):
-        """A new registry. Weights whose id left it, or now names other weights, are freed at once;
-        Ray Serve still caches the id, so a later request for it loads it again in __call__.
+        """A new registry, in effect at once. This does not wait for the GPU lock: while a replica
+        reconfigures, Ray Serve sends it no requests, so a wait behind a live prediction or a load
+        would stop every request to the deployment. Weights whose id now names other weights are
+        replaced by that id's next request, in __call__; an id that left the registry keeps its
+        weights until Ray Serve evicts it.
         """
-        async with self.gpu:
-            self.models = cfg["models"]
-            for model_id, model in self.loaded.items():
-                if model.resident and self.models.get(model_id) != model.spec:
-                    model.free()
+        self.models = cfg["models"]
 
     @serve.multiplexed(max_num_models_per_replica=MAX_RESIDENT)
     async def load(self, model_id: str) -> LiveModel:
@@ -392,10 +391,12 @@ class OF3Pool:
                     "resident": self.resident(),
                     "zone": self.zone,
                 }
-            if (
-                not model.resident
-            ):  # freed by reconfigure(): load this id's current weights
-                await asyncio.to_thread(model.load, self.models[model_id])
+            # The registry names other weights for this id now, or the weights were evicted:
+            # load this id's current weights
+            current = self.models[model_id]
+            if not model.resident or model.spec != current:
+                model.free()
+                await asyncio.to_thread(model.load, current)
             out = await asyncio.to_thread(model, smiles, fresh)
         return {
             **out,
