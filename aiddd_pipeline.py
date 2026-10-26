@@ -46,6 +46,7 @@ OF3_OB_URL = "https://openfold3-data.s3.amazonaws.com/openfold3-parameters/of3-o
 OF3_P2_CKPT = OF3_CACHE / "of3-p2-145k.pt"           # OF3-p2: start of the released fine-tune
 OF3_P2_URL = "https://openfold3-data.s3.amazonaws.com/openfold3-parameters/of3-p2-145k.pt"
 OF3_LEGACY = "/opt/of3-legacy/bin/run_openfold"       # OF3-p2 weights only load in OpenFold3 0.4.x
+OF3_LEGACY_PY = "/opt/of3-legacy/bin/python"          # its Python, for Ray actors that hold OF3-p2 weights
 OF3_FT_CKPT = OF3_CACHE / "of3p2-ft-ev2a.ckpt"
 OF3_FT_URL = ("https://openfold3-data.s3.amazonaws.com/openfold3-parameters/"
               "openbind/of3p2-ft-ev2a.ckpt")
@@ -123,6 +124,16 @@ FINETUNE_RUNS = SHARED / "finetune" / "runs"
 # Our fine-tune for the Serve demo: OF3-p2 145k on 66 EV-A71 fragments, 1,000 steps on 8 L4s
 OF3_OURS_CKPT = (FINETUNE_RUNS / "ft-p2-evfrag-1000s-8g-1023-0139"
                  / "checkpoint_2026-10-23_04-05-55.886640" / "of3_ev71_ft.pt")
+# The served models, by model id. "version" names the weights and their pose cache folder
+# (predictions/live_of3ft_<version>), so never reuse one for new weights. jobs/demo_*.yaml
+# carry the same entries as Service config.
+LIVE_MODELS = {
+    "base": {"version": "p2-145k", "name": "Base model: OF3-p2 145k", "checkpoint": str(OF3_P2_CKPT)},
+    "ev71-v1": {"version": "ev71-v1", "name": "EV-A71 specialist v1: our Ray Train fine-tune (8 L4s, 1,000 steps)",
+                "checkpoint": str(OF3_OURS_CKPT)},
+    "ev71-v2": {"version": "ev71-v2", "name": "EV-A71 specialist v2: public fine-tune (8 GPUs, 1,000 steps)",
+                "checkpoint": str(OF3_FT_CKPT)},
+}
 
 
 def latest_finetune_ckpt() -> Optional[Path]:
@@ -312,6 +323,7 @@ class OF3Predictor:
         self.ckpt_path, self.binary = ckpt_path, binary
         self.samples = diffusion_samples
         self.data_workers = data_workers
+        self.model = None   # an of3_live.OF3Model holding this checkpoint: predict in this process
         self.protein = read_first_sequence(self.t.path("fasta"))
         self.out = Path(out_dir) if out_dir else self.t.pred_root / key
         self.out.mkdir(parents=True, exist_ok=True)
@@ -348,9 +360,16 @@ class OF3Predictor:
 
         if todo:
             work = Path(tempfile.mkdtemp(prefix=f"{self.key}_"))
+            queries = {lig: self._query(smi) for lig, smi in todo}
+            proc, out, run_error = None, work / "out", None
+        if todo and self.model is not None:
+            try:
+                out = self.model.predict(queries)
+            except Exception as e:
+                run_error = e
+        elif todo:
             qjson = work / "query.json"
-            qjson.write_text(json.dumps(
-                {"seeds": [42], "queries": {lig: self._query(smi) for lig, smi in todo}}))
+            qjson.write_text(json.dumps({"seeds": [42], "queries": queries}))
             # OpenFold3 starts 10 data loader processes by default, each importing torch.
             # That oversubscribes an 8 vCPU node and stalls when predictors share a GPU.
             runner = work / "runner.yml"
@@ -363,9 +382,12 @@ class OF3Predictor:
             # refuses to unpickle by default. Both checkpoints are trusted downloads.
             env = {**os.environ, "TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD": "1"}
             proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        if todo:
             for lig_id, _ in todo:
                 try:
-                    samples = sorted((work / "out" / lig_id).glob(f"seed_*/{lig_id}_seed_*_sample_*_model.cif"))
+                    if run_error is not None:
+                        raise run_error
+                    samples = sorted((out / lig_id).glob(f"seed_*/{lig_id}_seed_*_sample_*_model.cif"))
                     if not samples:
                         raise FileNotFoundError("no OF3 output structure")
                     best, best_score, best_agg = samples[0], -np.inf, {}
@@ -378,13 +400,14 @@ class OF3Predictor:
                     rows[lig_id] = self._save(lig_id, best, metrics)
                 except Exception as e:
                     rows[lig_id] = {"status": "failed", "error": _err(e, proc)}
+                shutil.rmtree(out / lig_id, ignore_errors=True)
             shutil.rmtree(work, ignore_errors=True)
 
         return _attach(batch, rows, self.key, OF3_METRICS, time.time() - t0, len(todo))
 
 
 def _err(e, proc):
-    tail = proc.stderr[-600:] if proc.returncode else ""
+    tail = proc.stderr[-600:] if proc is not None and proc.returncode else ""
     return f"{type(e).__name__}: {e} | {tail}"[:900]
 
 

@@ -8,24 +8,25 @@ Reads aiddd_pipeline.py output (one row per crystal complex). Pick a model at
 the top, click a complex to see the predicted pose (green) over the X-ray
 ligand (orange). Uses 3Dmol.js from a CDN in the browser.
 
-Live prediction: paste a SMILES at the top. Three model deployments, each on half an L4:
-  BaseModel      pose, from the general OpenFold3 model that every program uses
-  EV71Specialist  pose, from OpenFold3 fine-tuned for the EV-A71 2A program
-  Boltz2Live      binding affinity (OpenFold3 does not predict affinity), and its own pose
-BaseModel and EV71Specialist are one class, OF3Live, with different checkpoints. The
-Viewer's user_config "pose_from" picks which deployment's pose the page shows, and a
-/predict request can name another one. If the molecule has a crystal structure, the page
-also draws the crystal ligand and reports the live pose's RMSD to it. All models reuse the
-pipeline's predictor classes. Repeat SMILES come back from the caches under
-predictions/live/ and predictions/live_of3ft*/.
+Live prediction: paste a SMILES at the top. Two model deployments, each on half an L4:
+  OF3Pool     pose, from OpenFold3. Ray Serve model multiplexing: one deployment serves the
+              base model and every program specialist, chosen per request by model id, and
+              keeps the most recently used checkpoints loaded in memory
+  Boltz2Live  binding affinity (OpenFold3 does not predict affinity)
+The model registry is OF3Pool's user_config; the Viewer's user_config "route" names the model
+id that answers this program (EV-A71 2A), and a /predict request can name another one. Both
+change with `anyscale service deploy --in-place` (jobs/demo_*.yaml): no restart.
+If the molecule has a crystal structure, the page also draws the crystal ligand and reports
+the live pose's RMSD to it. Every answer says where it came from: the pose cache, a model
+already in memory, or a model loaded for this request. Poses are cached under
+predictions/live/ and predictions/live_of3ft_<version>/.
 
 pip install "ray[serve]" fastapi
 """
 
 import asyncio
-import hashlib
-import json
 import os
+import resource
 from pathlib import Path
 
 import pandas as pd
@@ -34,7 +35,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from ray import serve
 from ray.serve.handle import DeploymentHandle
 
-from aiddd_pipeline import OF3_FT_CKPT, OF3_P2_CKPT, pose_in_crystal_frame, relocate_paths, score_pose
+from aiddd_pipeline import LIVE_MODELS, OF3_LEGACY_PY, pose_in_crystal_frame, relocate_paths, score_pose
+from of3_live import LiveModel, predict_one
 
 SHARED = Path(os.environ.get("AIDDD_SHARED", "/mnt/shared_storage/aiddd"))
 RESULTS = Path(os.environ.get("AIDDD_RESULTS", SHARED / "results" / "ev71-2a"))
@@ -63,11 +65,15 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
  th[title]{cursor:help;text-decoration:underline dotted} #lread{font-size:12px;color:#444;margin-top:4px;line-height:1.4}
  #hist table{margin-top:8px;font-size:12px} #hist tr:hover{background:none;cursor:default}
  #hist .new td{background:#eef7f0} #hist .ver{font-family:ui-monospace,monospace;font-size:11px;color:#556}
+ #pool{font-size:12px;color:#556;margin-top:6px} #pool code{background:#eef1f6;padding:0 4px;border-radius:3px}
 </style></head><body>
 <div id="list">
 <form id="live" onsubmit="predict(event)"><h2>Live prediction</h2>
  <input id="smi" placeholder="SMILES, e.g. CNC(=O)c1nn(C)c2ccccc12" style="width:100%;box-sizing:border-box;padding:5px">
- <button style="margin:6px 0">Predict</button> <span id="lstat"></span><div id="lread"></div><div id="hist"></div></form>
+ <button style="margin:6px 0">Predict</button>
+ <label style="font-size:12px;color:#444" title="Delete this molecule's cached pose first, so the model really runs (about 30 s)">
+  <input type="checkbox" id="fresh"> run live, skip the cached pose</label>
+ <span id="lstat"></span><div id="lread"></div><div id="hist"></div><div id="pool"></div></form>
 <details><summary>How to read this page</summary><dl>
  <dt>The question</dt><dd>Each row is an X-ray crystal structure of a compound bound to the EV-A71 2A protease. The model
   received only the protein sequence and the compound's SMILES string; the crystal structure is the answer key.</dd>
@@ -84,8 +90,10 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
   Fragments typically bind at 3 to 5; optimized compounds reach 7 or more. Blank means not measured.</dd>
  <dt>Colours in the 3D view</dt><dd><b style="color:#2e9e4f">Green</b>: the model's predicted pose.
   <b style="color:#f28c28">Orange</b>: the crystal pose. Grey ribbon: the predicted protein. Good predictions overlap.</dd>
- <dt>Live prediction</dt><dd>The <b>pose</b> comes from the model named in the result line: Boltz-2, or OF3
-  fine-tuned on this protein's fragment screen. The <b>affinity</b> comes from Boltz-2, because OpenFold3 does not
+ <dt>Live prediction</dt><dd>The <b>pose</b> comes from the OpenFold3 model named in the result line: the general
+  base model, or a specialist fine-tuned on this protein's fragment screen. The result line also says where the
+  answer came from: the <b>pose cache</b> (computed earlier, returned at once), a model <b>already in memory</b>,
+  or a model <b>loaded for this request</b>. The <b>affinity</b> comes from Boltz-2, because OpenFold3 does not
   predict affinity. If the molecule has a crystal structure, the crystal ligand is drawn in orange and the result
   line gives the ligand RMSD.
   <b>Ligand ipTM</b> (0 to 1) is the pose model's confidence in the protein-ligand interface; as a
@@ -124,10 +132,11 @@ async function predict(ev){
   ev.preventDefault();
   const smi = document.getElementById("smi").value.trim(), st = document.getElementById("lstat");
   if(!smi) return;
-  st.textContent = "predicting on GPU (about a minute; cached repeats are instant)...";
+  const fresh = document.getElementById("fresh").checked;
+  st.textContent = fresh ? "predicting live on GPU (about 30 s)..." : "predicting (cached poses are instant; new ones about 30 s)...";
   document.getElementById("lread").textContent = "";
   const r = await fetch(u("/predict"), {method:"POST", headers:{"Content-Type":"application/json"},
-                                     body: JSON.stringify({smiles: smi})});
+                                     body: JSON.stringify({smiles: smi, fresh})});
   const j = await r.json();
   if(!r.ok || j.status === "failed" || j.status === "skipped"){ st.textContent = "failed: " + (j.error || r.status); return; }
   const m = j.metrics, f = v => (typeof v === "number" ? v.toFixed(2) : "n/a");
@@ -144,8 +153,10 @@ async function predict(ev){
       from it, ${key.lig_rmsd < 2 ? "a correct pose" : "a wrong pose"} (correct is under 2 &Aring;).`);
   st.innerHTML = `pose: ${j.pose_model} (${j.models.pose.version}), ipTM <b>${f(iptm)}</b>` +
     (key && key.lig_rmsd !== null ? ` &middot; RMSD <b>${f(key.lig_rmsd)}</b> &Aring;` : "") +
-    ` &middot; affinity <b>${f(m.affinity_pred_value)}</b> (log10 IC50, &micro;M) &middot; P(binder) <b>${f(m.affinity_probability_binary)}</b> &middot; ${j.seconds.toFixed(0)} s`;
+    ` &middot; affinity <b>${f(m.affinity_pred_value)}</b> (log10 IC50, &micro;M) &middot; P(binder) <b>${f(m.affinity_probability_binary)}</b>` +
+    `<br>${source(j)}`;
   record(smi, j);
+  pool();
   document.getElementById("cur").textContent = `live (${j.pose_model}): ${smi}`;
   viewer.clear(); viewer.addModel(j.cif, j.format || "cif");
   viewer.setStyle({model:0},{cartoon:{color:"#cfd8dc",opacity:0.6}});
@@ -160,35 +171,41 @@ async function predict(ev){
 // same SMILES is answered by the new model version: its row is highlighted under the old one.
 // Kept in the page only: reload it to start the demo clean.
 const answers = [];
+// Where a pose came from: the pose cache, a model the OpenFold3 replica already held, or one
+// Ray Serve loaded for this request (model multiplexing: load() runs once per model id).
+function source(j){
+  const s = j.seconds.toFixed(0);
+  if (j.source === "cache") return `<b>pose from cache</b> (computed earlier) &middot; ${s} s`;
+  if (j.source === "memory") return `<b>computed live</b>, model already in memory &middot; ${s} s`;
+  return `<b>computed live</b>, model loaded for this request (${j.load_seconds.toFixed(0)} s of ${s} s)`;
+}
 function record(smi, j){
   const key = j.answer_key, last = answers.filter(h => h.smi === smi).pop();
   const version = j.models.pose.version;
-  if (!last || last.version !== version)
-    answers.push({smi, version, name: j.pose_model, iptm: j.pose_iptm, aff: j.metrics.affinity_pred_value,
-                  rmsd: key && key.lig_rmsd !== null ? key.lig_rmsd : null});
+  const row = {smi, version, name: j.pose_model, iptm: j.pose_iptm, aff: j.metrics.affinity_pred_value,
+               rmsd: key && key.lig_rmsd !== null ? key.lig_rmsd : null,
+               how: j.source === "cache" ? "cache" : j.source === "memory" ? "live" : "live + load", s: j.seconds};
+  if (last && last.version === version) Object.assign(last, row); else answers.push(row);
   const rows = answers.filter(h => h.smi === smi), f = v => (typeof v === "number" ? v.toFixed(2) : "n/a");
   document.getElementById("hist").innerHTML = rows.length < 2 ? "" :
-    `<table><tr><th>Answered by</th><th>RMSD (&Aring;)</th><th>ipTM</th><th>Affinity</th></tr>` +
+    `<table><tr><th>Answered by</th><th>RMSD (&Aring;)</th><th>ipTM</th><th>Affinity</th><th>How</th></tr>` +
     rows.map((h, i) => `<tr class="${i === rows.length - 1 ? "new" : ""}"><td>${h.name}<br><span class="ver">version ${h.version}</span></td>` +
-      `<td class="${h.rmsd !== null && h.rmsd < 2 ? "good" : ""}">${f(h.rmsd)}</td><td>${f(h.iptm)}</td><td>${f(h.aff)}</td></tr>`).join("") +
+      `<td class="${h.rmsd !== null && h.rmsd < 2 ? "good" : ""}">${f(h.rmsd)}</td><td>${f(h.iptm)}</td><td>${f(h.aff)}</td>` +
+      `<td>${h.how}<br><span class="ver">${h.s.toFixed(0)} s</span></td></tr>`).join("") +
     `</table>`;
 }
+// The OpenFold3 pool: which model ids its replica holds in memory now (GET /models).
+async function pool(){
+  try {
+    const p = await (await fetch(u("/models"))).json();
+    document.getElementById("pool").innerHTML = `This program's requests go to <code>${p.route}</code>. ` +
+      `In memory on the OpenFold3 replica (up to ${p.max_resident}): ` +
+      (p.resident.length ? p.resident.map(i => `<code>${i}</code>`).join(" ") : "none yet") + `.`;
+  } catch(e) {}
+}
+pool();
 const first = document.querySelector("tr[data-cid]"); if(first) show(first.dataset.cid);
 </script></body></html>"""
-
-
-def predict_one(pred, smiles: str) -> dict:
-    """One SMILES through a pipeline predictor, as a JSON-ready dict."""
-    from aiddd_pipeline import validate
-    lig_id = "smi_" + hashlib.sha1(smiles.encode()).hexdigest()[:12]
-    batch = validate(pd.DataFrame({"ligand_id": [lig_id], "smiles": [smiles]}))
-    r = pred(batch).iloc[0]
-    k = pred.key
-    out = {"ligand_id": lig_id, "status": r[f"{k}_status"], "error": r[f"{k}_error"],
-           "metrics": json.loads(r[f"{k}_metrics"]), "seconds": float(r[f"{k}_batch_seconds"])}
-    if r[f"{k}_cif"]:
-        out["cif"], out["cif_path"] = Path(r[f"{k}_cif"]).read_text(), r[f"{k}_cif"]
-    return out
 
 
 def canonical(smiles: str):
@@ -200,18 +217,15 @@ def canonical(smiles: str):
 
 
 def live_cache(pred, version: str) -> Path:
-    """One cache folder per model version, so a swapped-in model never returns the old model's
+    """One cache folder per model version, so a new model never returns an old model's
     cached poses. "base" keeps the original folder."""
     out = pred.t.pred_root / (pred.key if version == "base" else f"{pred.key}_{version}")
     out.mkdir(parents=True, exist_ok=True)
     return out
 
 
-# Hot swap: the model deployments take {"version", "checkpoint", "name" (optional label)}
-# as user_config (OF3Live also takes "legacy"), and the Viewer takes {"pose_from"}.
 # A Serve config (or `anyscale service deploy --in-place`) that changes only user_config
-# calls reconfigure() on the running replicas, with no restart. Each call runs the model as
-# a fresh subprocess, so the next request already uses the new checkpoint.
+# calls reconfigure() on the running replicas, with no restart.
 #
 # Half an L4 per replica (about 5 GB for Boltz-2 and 3 GB for OpenFold3 of its 24 GB).
 # build_app() fits the replicas into the two L4s the Service is given.
@@ -242,48 +256,78 @@ class Boltz2Live:
         return {**predict_one(self.pred, smiles), "model": self.model}
 
 
-@serve.deployment(ray_actor_options={"num_gpus": 0.5, "accelerator_type": "L4"},
-                  autoscaling_config={"min_replicas": 1, "max_replicas": 2,
+# How many model ids one OF3Pool replica keeps loaded. Each holds about 6 GB of host memory
+# (the weights move to the GPU per request), and the L4 node has 32 GB. A further id evicts the
+# least recently used one: Ray Serve calls its __del__, which frees it.
+MAX_RESIDENT = 2
+
+
+@serve.deployment(ray_actor_options={"num_gpus": 0.5, "accelerator_type": "L4",
+                                     # OF3-p2 checkpoints only load in OpenFold3 0.4.x
+                                     "runtime_env": {"py_executable": OF3_LEGACY_PY}},
+                  autoscaling_config={"min_replicas": 1, "max_replicas": 1,
                                       "target_ongoing_requests": 1},
-                  user_config={"version": "base", "checkpoint": None})
-class OF3Live:
-    """Pose from one OpenFold3 checkpoint. build_app() deploys it twice: as the base model
-    and as the EV-A71 2A specialist. Both share one cache root: a version name always means
-    the same weights."""
+                  user_config={"models": LIVE_MODELS})
+class OF3Pool:
+    """OpenFold3 poses from many checkpoints in one deployment: Ray Serve model multiplexing.
+
+    user_config {"models": {model_id: {"version", "name", "checkpoint"}}} is the registry. An
+    in-place update that adds an id makes it servable at once; its weights load on the first
+    request for it. Requests name the id with handle.options(multiplexed_model_id=...) or the
+    serve_multiplexed_model_id HTTP header, and Ray Serve routes each to a replica that already
+    holds it when one exists."""
 
     def __init__(self):
-        from aiddd_pipeline import OF3_FT_CKPT, TARGETS, OF3Predictor
-        self.pred = OF3Predictor(key="live_of3ft", ckpt_path=str(OF3_FT_CKPT),
-                                 binary="/opt/of3-legacy/bin/run_openfold", target="ev71-2a",
-                                 out_dir=str(TARGETS["ev71-2a"].pred_root / "live_of3ft"))
+        self.models, self.loaded = {}, {}
+        self.gpu = asyncio.Lock()   # OpenFold3 runs one prediction at a time per replica
 
-    def reconfigure(self, cfg: dict):
-        """checkpoint: None is the released of3ft (OF3-p2, legacy openfold3). Anything else is
-        an OpenFold3 state dict such as finetune_ray_train.py's of3_ev71_ft.pt.
-        legacy: run with the legacy openfold3 (0.4.3), which every OF3-p2 checkpoint needs,
-        such as of3-p2-145k.pt. Default: only for the released of3ft."""
-        from aiddd_pipeline import OF3_FT_CKPT
-        ckpt = cfg.get("checkpoint")
-        self.pred.ckpt_path = ckpt or str(OF3_FT_CKPT)
-        legacy = cfg.get("legacy", ckpt is None)
-        self.pred.binary = "/opt/of3-legacy/bin/run_openfold" if legacy else "run_openfold"
-        self.pred.out = live_cache(self.pred, cfg["version"])
-        self.model = {"name": cfg.get("name", MODELS["of3ft"]), "version": cfg["version"],
-                      "checkpoint": self.pred.ckpt_path}
+    async def reconfigure(self, cfg: dict):
+        """A new registry. Weights whose id left it, or now names other weights, are freed at once;
+        Ray Serve still caches the id, so a later request for it loads it again in __call__."""
+        async with self.gpu:
+            self.models = cfg["models"]
+            for model_id, model in self.loaded.items():
+                if model.resident and self.models.get(model_id) != model.spec:
+                    model.free()
 
-    def __call__(self, smiles: str) -> dict:
-        return {**predict_one(self.pred, smiles), "model": self.model}
+    @serve.multiplexed(max_num_models_per_replica=MAX_RESIDENT)
+    async def load(self, model_id: str) -> LiveModel:
+        """Runs on the first request for model_id on this replica. Builds OpenFold3 and reads the
+        checkpoint once; the returned model stays loaded until evicted."""
+        async with self.gpu:
+            model = await asyncio.to_thread(LiveModel, self.models[model_id])
+        self.loaded[model_id] = model
+        return model
+
+    async def __call__(self, smiles: str, fresh: bool = False) -> dict:
+        """fresh: ignore the cached pose, so the model really runs."""
+        model_id = serve.get_multiplexed_model_id()
+        if model_id not in self.models:
+            raise KeyError(f"unknown model id {model_id!r}; registered: {sorted(self.models)}")
+        model = await self.load(model_id)
+        async with self.gpu:
+            if not model.resident:   # freed by reconfigure(): load this id's current weights
+                await asyncio.to_thread(model.load, self.models[model_id])
+            out = await asyncio.to_thread(model, smiles, fresh)
+        return {**out, "model_id": model_id, "resident": self.resident()}
+
+    def resident(self) -> list:
+        """Model ids this replica holds in memory now."""
+        return [i for i, m in self.loaded.items() if m.resident]
+
+    async def status(self) -> dict:
+        rss = int(open("/proc/self/statm").read().split()[1]) * resource.getpagesize() / 1e9
+        return {"registry": {i: {k: v for k, v in m.items() if k != "checkpoint"} for i, m in self.models.items()},
+                "resident": self.resident(), "max_resident": MAX_RESIDENT, "replica_memory_gb": round(rss, 1)}
 
 
 @serve.deployment(num_replicas=1, ray_actor_options={"num_cpus": 1},
-                  user_config={"pose_from": "EV71Specialist"})
+                  user_config={"route": "ev71-v2"})
 @serve.ingress(api)
 class Viewer:
-    def __init__(self, live: DeploymentHandle, base: DeploymentHandle = None,
-                 specialist: DeploymentHandle = None):
+    def __init__(self, live: DeploymentHandle, pool: DeploymentHandle):
         self.live = live   # Boltz-2: affinity
-        # OpenFold3 pose deployments by name. "Boltz2Live" takes the pose from Boltz-2.
-        self.poses = {name: h for name, h in (("BaseModel", base), ("EV71Specialist", specialist)) if h}
+        self.pool = pool   # OpenFold3: poses, multiplexed by model id
         # File by file: a column that is all null in one file and numeric in another
         # will not merge as one Parquet dataset.
         self.df = relocate_paths(pd.concat([pd.read_parquet(f) for f in sorted(RESULTS.glob("*.parquet"))],
@@ -296,9 +340,9 @@ class Viewer:
                 self.known.setdefault(c, r)
 
     def reconfigure(self, cfg: dict):
-        """pose_from: "BaseModel", "EV71Specialist" or "Boltz2Live", the deployment whose pose
-        /predict returns. A request can name another one."""
-        self.pose_from = cfg["pose_from"]
+        """route: the model id that answers this program's requests. Repointing it is how a
+        new version goes live. A /predict request can name another id."""
+        self.route = cfg["route"]
 
     def answer_key(self, row, cif_path: str) -> dict:
         """For a molecule with a crystal structure: the live pose's ligand RMSD to that crystal,
@@ -338,17 +382,18 @@ class Viewer:
         smiles = str(body.get("smiles", "")).strip()
         if not smiles or len(smiles) > 300:
             return JSONResponse({"status": "failed", "error": "need a SMILES under 300 chars"}, 400)
-        pose_from = body.get("pose_from") or self.pose_from
-        if pose_from != "Boltz2Live" and pose_from not in self.poses:
-            return JSONResponse({"status": "failed", "error": f"unknown pose_from {pose_from!r}"}, 400)
-        # The pose and affinity models run at the same time, each on its own replica
-        if pose_from == "Boltz2Live":
-            aff = await self.live.remote(smiles)
-            pose = aff
-        else:
-            aff, pose = await asyncio.gather(self.live.remote(smiles), self.poses[pose_from].remote(smiles))
+        model_id = body.get("model") or self.route
+        fresh = bool(body.get("fresh"))   # ignore the cached pose: run the model for real
+        # The pose and affinity models run at the same time, each on its own replica.
+        # multiplexed_model_id sends the pose request to a replica that holds that model.
+        try:
+            aff, pose = await asyncio.gather(
+                self.live.remote(smiles),
+                self.pool.options(multiplexed_model_id=model_id).remote(smiles, fresh))
+        except Exception as e:
+            return JSONResponse({"status": "failed", "error": f"{type(e).__name__}: {e}"[:600]}, 500)
         iptm = pose["metrics"].get("ligand_iptm", pose["metrics"].get("iptm"))
-        out = {**pose, "pose_from": pose_from, "pose_model": pose["model"]["name"], "pose_iptm": iptm,
+        out = {**pose, "pose_model": pose["model"]["name"], "pose_iptm": iptm,
                "metrics": aff["metrics"], "affinity_status": aff["status"],
                "seconds": max(pose["seconds"], aff["seconds"]),
                "models": {"pose": pose["model"], "affinity": aff["model"]}}
@@ -356,6 +401,11 @@ class Viewer:
         if (row := self.known.get(c) if c else None) is not None and pose.get("cif_path"):
             out.update(self.answer_key(row, pose["cif_path"]))
         return JSONResponse(out, 200 if out["status"] in ("ok", "cached") else 422)
+
+    @api.get("/models")
+    async def models_status(self):
+        """The registry, the route, and which model ids the OF3Pool replica holds in memory."""
+        return {"route": self.route, **(await self.pool.status.remote())}
 
     @api.get("/structure/pred/{key}/{cid}", response_class=PlainTextResponse)
     def pred(self, key: str, cid: str):
@@ -379,26 +429,14 @@ class Viewer:
         return PlainTextResponse("no ground truth", status_code=404)
 
 
-# Starting checkpoints. The base model is a general model that never saw EV-A71 2A; the
-# specialist is the public fine-tune of it on the EV-A71 2A fragment screen.
-BASE = {"version": "p2-145k", "name": "Base model: OF3-p2 145k",
-         "checkpoint": str(OF3_P2_CKPT), "legacy": True}
-SPECIALIST = {"version": "ev71-v2", "name": "EV-A71 specialist v2: public fine-tune (8 GPUs, 1,000 steps)",
-              "checkpoint": str(OF3_FT_CKPT), "legacy": True}
-
-
 def build_app(accelerator: str = "L4"):
     """The Viewer composed with the model deployments, on the given GPU type. Two L4s give four
-    half-GPU slots: up to two for Boltz-2 (every request needs its affinity), one for the
-    base model and one for the specialist."""
+    half-GPU slots: up to two for Boltz-2 (every request needs its affinity) and one for the
+    OpenFold3 pool. Default registry: aiddd_pipeline.LIVE_MODELS; default route: ev71-v2."""
     gpu = {"num_gpus": 0.5, "accelerator_type": accelerator}
-    one = {"min_replicas": 1, "max_replicas": 1, "target_ongoing_requests": 1}
     return Viewer.bind(
         Boltz2Live.options(ray_actor_options=gpu).bind(),
-        OF3Live.options(name="BaseModel", ray_actor_options=gpu, autoscaling_config=one,
-                        user_config=BASE).bind(),
-        OF3Live.options(name="EV71Specialist", ray_actor_options=gpu, autoscaling_config=one,
-                        user_config=SPECIALIST).bind())
+        OF3Pool.options(ray_actor_options={**gpu, "runtime_env": {"py_executable": OF3_LEGACY_PY}}).bind())
 
 
 app = build_app()

@@ -3,11 +3,12 @@
 # Not running yet? Deploy jobs/service.yaml first (5 to 10 min), then step 1. Edit no file in
 # this folder between steps: a code change makes the update restart every replica.
 #
-#   anyscale service deploy -f jobs/demo_1_base.yaml --in-place    # reset to the base model
+#   anyscale service deploy -f jobs/demo_1_base.yaml --in-place    # start: base model only
 #   anyscale service deploy -f jobs/demo_2_ft.yaml --in-place      # add the fine-tune
-#   anyscale service deploy -f jobs/demo_3_next_ft.yaml --in-place # swap in the next fine-tune
+#   anyscale service deploy -f jobs/demo_3_next_ft.yaml --in-place # add the next fine-tune
 #
-# Every request goes to the base model.
+# The registry holds the base model only; every request goes to it. Its weights load on the
+# first request and stay in memory.
 name: aiddd-viewer
 image_uri: anyscale/image/aiddd-boltz2-of3:4
 working_dir: .
@@ -27,8 +28,12 @@ compute_config:
 applications:
   - import_path: serve_viewer:app
     deployments:
-      - name: BaseModel
-        user_config: {version: p2-145k, name: "Base model: OF3-p2 145k", legacy: true,
-                      checkpoint: /mnt/shared_storage/aiddd/of3_cache/of3-p2-145k.pt}
+      - name: OF3Pool
+        user_config:
+          models:
+            base:
+              version: p2-145k
+              name: "Base model: OF3-p2 145k"
+              checkpoint: /mnt/shared_storage/aiddd/of3_cache/of3-p2-145k.pt
       - name: Viewer
-        user_config: {pose_from: BaseModel}
+        user_config: {route: base}
