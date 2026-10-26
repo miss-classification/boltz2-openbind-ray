@@ -8,7 +8,10 @@ lifecycle the live demo shows and check what multiplexing does at each step:
   4. our fine-tune (ev71-v1)            a second model id loads beside the first
   5. in-place update: add ev71-v2 and route the program to it (reconfigure, no restart:
      the loaded models survive it)
-  6. ev71-v2                            a third id evicts the least recently used one
+  6. ev71-v2                            a third id loads beside the other two (MAX_RESIDENT = 3)
+  7. reset to step 1                    ids that left the registry are freed; base stays loaded
+  8. a cached pose after the reset      answered from the cache
+  9. the same, fresh                    computed by the base model still in memory
 
     python scripts/check_serve.py                       # deploy, check, delete the app
     python scripts/check_serve.py --keep                # leave the app running afterwards
@@ -52,7 +55,7 @@ def deploy(model_ids, route, timeout=1800):
     ServeSubmissionClient(DASHBOARD).deploy_applications({"applications": [{
         "name": APP, "route_prefix": PREFIX, "import_path": "serve_viewer:app", "runtime_env": env,
         "deployments": [{"name": "OF3Pool", "user_config": {"models": models}},
-                        {"name": "Viewer", "user_config": {"route": route}}]}]})
+                        {"name": "Viewer", "user_config": {"route": route, "allow_fresh": True}}]}]})
     t0 = time.time()
     while time.time() - t0 < timeout:
         try:
@@ -79,7 +82,7 @@ def show(step, b):
     rmsd = (b.get("answer_key") or {}).get("lig_rmsd")
     load = f" + {b['load_seconds']:.0f} s load" if b["load_seconds"] else ""
     print(f"[ok] {step:<34} {b['model_id']:<8} source={b['source']:<7} {b['wall']:5.1f} s wall{load}"
-          f"  RMSD {rmsd if rmsd is None else round(rmsd, 2)}  resident={b['resident']}")
+          f"  RMSD {rmsd if rmsd is None else round(rmsd, 2)}  resident={b['resident']}  zones={b.get('zone')}/{b.get('affinity_zone')}")
 
 
 def main():
@@ -119,21 +122,24 @@ def main():
     assert sorted(status["resident"]) == ["base", "ev71-v1"], "the update restarted the pool replica"
 
     b = predict(X7259A, fresh=True)
-    show("6 ev71-v2 by route, evicts the LRU", b)
+    show("6 ev71-v2 by route, a third model", b)
     assert b["model_id"] == "ev71-v2" and b["source"] == "loaded", b
-    assert sorted(b["resident"]) == ["ev71-v1", "ev71-v2"], b["resident"]
+    assert sorted(b["resident"]) == ["base", "ev71-v1", "ev71-v2"], b["resident"]
     status = requests.get(f"{URL}/models", timeout=60).json()
-    print(f"[ok] pool after eviction: resident={status['resident']} memory={status['replica_memory_gb']} GB")
+    print(f"[ok] pool with 3 resident: memory={status['replica_memory_gb']} GB, zone={status.get('zone')}")
 
     status = deploy(["base"], route="base")
     print(f"[ok] {'7 reset to step 1 (base only)':<34} resident={status['resident']} memory={status['replica_memory_gb']} GB")
-    assert status["resident"] == [], "ids that left the registry should be freed"
+    assert status["resident"] == ["base"], "ev71-v1 and ev71-v2 left the registry and should be freed"
     gone = requests.post(f"{URL}/predict", json={"smiles": X7259A, "model": "ev71-v2"}, timeout=900)
     assert gone.status_code == 404 and "unknown model id" in gone.text, (gone.status_code, gone.text[:300])
     print(f"[ok] {'  ev71-v2 by id after the reset':<34} rejected: not registered")
     b = predict(X7259A)
-    show("8 base after the reset", b)
-    assert b["model_id"] == "base" and b["resident"] == ["base"], b["resident"]
+    show("8 base, cached, after the reset", b)
+    assert b["model_id"] == "base" and b["source"] == "cache", b["source"]
+    b = predict(X7259A, fresh=True)
+    show("9 base, fresh, after the reset", b)
+    assert b["source"] == "memory" and b["resident"] == ["base"], (b["source"], b["resident"])
 
     bad = requests.post(f"{URL}/predict", json={"smiles": "not-a-molecule"}, timeout=900)
     assert bad.status_code in (400, 422), bad.status_code

@@ -36,7 +36,7 @@ from ray import serve
 from ray.serve.handle import DeploymentHandle
 
 from aiddd_pipeline import LIVE_MODELS, OF3_LEGACY_PY, pose_in_crystal_frame, relocate_paths, score_pose
-from of3_live import LiveModel, predict_one
+from of3_live import LiveModel, cached_answer, node_zone, predict_one
 
 SHARED = Path(os.environ.get("AIDDD_SHARED", "/mnt/shared_storage/aiddd"))
 RESULTS = Path(os.environ.get("AIDDD_RESULTS", SHARED / "results" / "ev71-2a"))
@@ -63,15 +63,16 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
  details{font-size:13px;line-height:1.45;margin:0 0 12px;padding:8px 10px;background:#f6f7f9;border-radius:6px}
  summary{cursor:pointer;font-weight:600} details dt{font-weight:600;margin-top:8px} details dd{margin:2px 0 0 0;color:#333}
  th[title]{cursor:help;text-decoration:underline dotted} #lread{font-size:12px;color:#444;margin-top:4px;line-height:1.4}
- #hist table{margin-top:8px;font-size:12px} #hist tr:hover{background:none;cursor:default}
- #hist .new td{background:#eef7f0} #hist .ver{font-family:ui-monospace,monospace;font-size:11px;color:#556}
- #pool{font-size:12px;color:#556;margin-top:6px} #pool code{background:#eef1f6;padding:0 4px;border-radius:3px}
+ #hist table{margin-top:8px;font-size:14px} #hist tr:hover{background:none;cursor:default}
+ #hist .new td{background:#eef7f0} #hist .ver{font-family:ui-monospace,monospace;font-size:12px;color:#556}
+ #lstat{font-size:14px;line-height:1.5}
+ #pool{font-size:14px;color:#334;margin-top:8px;line-height:1.5} #pool code{background:#eef1f6;padding:0 4px;border-radius:3px;font-size:14px}
 </style></head><body>
 <div id="list">
 <form id="live" onsubmit="predict(event)"><h2>Live prediction</h2>
  <input id="smi" placeholder="SMILES, e.g. CNC(=O)c1nn(C)c2ccccc12" style="width:100%;box-sizing:border-box;padding:5px">
  <button style="margin:6px 0">Predict</button>
- <label style="font-size:12px;color:#444" title="Delete this molecule's cached pose first, so the model really runs (about 30 s)">
+ <label id="freshbox" style="display:none;font-size:12px;color:#444" title="Delete this molecule's cached pose first, so the model really runs (about 30 s)">
   <input type="checkbox" id="fresh"> run live, skip the cached pose</label>
  <span id="lstat"></span><div id="lread"></div><div id="hist"></div><div id="pool"></div></form>
 <details><summary>How to read this page</summary><dl>
@@ -154,7 +155,8 @@ async function predict(ev){
   st.innerHTML = `pose: ${j.pose_model} (${j.models.pose.version}), ipTM <b>${f(iptm)}</b>` +
     (key && key.lig_rmsd !== null ? ` &middot; RMSD <b>${f(key.lig_rmsd)}</b> &Aring;` : "") +
     ` &middot; affinity <b>${f(m.affinity_pred_value)}</b> (log10 IC50, &micro;M) &middot; P(binder) <b>${f(m.affinity_probability_binary)}</b>` +
-    `<br>${source(j)}`;
+    `<br>${source(j)}` +
+    (j.zone ? `<br>GPU replicas: OpenFold3 in <b>${j.zone}</b>, Boltz-2 in <b>${j.affinity_zone || "?"}</b>` : "");
   record(smi, j);
   pool();
   document.getElementById("cur").textContent = `live (${j.pose_model}): ${smi}`;
@@ -202,7 +204,9 @@ async function pool(){
     const p = await (await fetch(u("/models"))).json();
     document.getElementById("pool").innerHTML = `This program's requests go to <code>${p.route}</code>. ` +
       `In memory on the OpenFold3 replica (up to ${p.max_resident}): ` +
-      (p.resident.length ? p.resident.map(i => `<code>${i}</code>`).join(" ") : "none yet") + `.`;
+      (p.resident.length ? p.resident.map(i => `<code>${i}</code>`).join(" ") : "none yet") + `.` +
+      (p.zone ? ` OpenFold3 replica in <code>${p.zone}</code>.` : "");
+    document.getElementById("freshbox").style.display = p.allow_fresh ? "inline" : "none";
   } catch(e) {}
 }
 pool();
@@ -231,9 +235,13 @@ def live_cache(pred, version: str) -> Path:
 #
 # Half an L4 per replica (about 5 GB for Boltz-2 and 3 GB for OpenFold3 of its 24 GB).
 # build_app() fits the replicas into the two L4s the Service is given.
+# Ray 2.59 runs a sync method on the replica's event loop, so a minute-long prediction there would
+# hold up every other request. These deployments answer cached poses straight from disk, and run a
+# live prediction in a thread, one at a time per replica.
 @serve.deployment(ray_actor_options={"num_gpus": 0.5, "accelerator_type": "L4"},
                   autoscaling_config={"min_replicas": 1, "max_replicas": 2,
                                       "target_ongoing_requests": 1},
+                  max_ongoing_requests=32,
                   user_config={"version": "base", "checkpoint": None})
 class Boltz2Live:
     """Boltz-2 affinity (and its own pose). Same predictor class as the batch pipeline."""
@@ -245,6 +253,8 @@ class Boltz2Live:
             key = "live"   # cache under predictions/live/, separate from the benchmark
 
         self.pred = LivePredictor()
+        self.gpu = asyncio.Lock()
+        self.zone = node_zone()
 
     def reconfigure(self, cfg: dict):
         """checkpoint: a Boltz-2 structure checkpoint (`boltz predict --checkpoint`); None is
@@ -254,14 +264,19 @@ class Boltz2Live:
         self.pred.out = live_cache(self.pred, cfg["version"])
         self.model = {"name": cfg.get("name", MODELS["boltz2"]), "version": cfg["version"], "checkpoint": ckpt}
 
-    def __call__(self, smiles: str) -> dict:
-        return {**predict_one(self.pred, smiles), "model": self.model}
+    async def __call__(self, smiles: str) -> dict:
+        out = await asyncio.to_thread(cached_answer, self.pred.out, smiles)
+        if out is None:
+            async with self.gpu:
+                out = await asyncio.to_thread(predict_one, self.pred, smiles)
+        return {**out, "model": self.model, "zone": self.zone}
 
 
 # How many model ids one OF3Pool replica keeps loaded. Each holds about 1.5 GB of host memory
-# (the weights move to the GPU per request), so more fit; 2 keeps the demo's eviction visible.
-# A further id evicts the least recently used one: Ray Serve calls its __del__, which frees it.
-MAX_RESIDENT = 2
+# (the weights move to the GPU per request). 3 keeps every demo model loaded, so a room that mixes
+# ids never waits on a reload. A further id evicts the least recently used one: Ray Serve calls
+# its __del__, which frees it. Notebook 03's own pool keeps 2, to show an eviction.
+MAX_RESIDENT = 3
 
 
 @serve.deployment(ray_actor_options={"num_gpus": 0.5, "accelerator_type": "L4",
@@ -269,6 +284,7 @@ MAX_RESIDENT = 2
                                      "runtime_env": {"py_executable": OF3_LEGACY_PY}},
                   autoscaling_config={"min_replicas": 1, "max_replicas": 1,
                                       "target_ongoing_requests": 1},
+                  max_ongoing_requests=32,
                   user_config={"models": LIVE_MODELS})
 class OF3Pool:
     """OpenFold3 poses from many checkpoints in one deployment: Ray Serve model multiplexing.
@@ -282,6 +298,7 @@ class OF3Pool:
     def __init__(self):
         self.models, self.loaded = {}, {}
         self.gpu = asyncio.Lock()   # OpenFold3 runs one prediction at a time per replica
+        self.zone = node_zone()
 
     async def reconfigure(self, cfg: dict):
         """A new registry. Weights whose id left it, or now names other weights, are freed at once;
@@ -306,12 +323,19 @@ class OF3Pool:
         model_id = serve.get_multiplexed_model_id()
         if model_id not in self.models:
             raise KeyError(f"unknown model id {model_id!r}; registered: {sorted(self.models)}")
+        spec = self.models[model_id]
+        if not fresh:   # a cached pose needs no model: answer it without loading or waiting
+            from aiddd_pipeline import TARGETS
+            cache = TARGETS["ev71-2a"].pred_root / f"live_of3ft_{spec['version']}"
+            if (out := await asyncio.to_thread(cached_answer, cache, smiles)) is not None:
+                return {**out, "model": dict(spec), "model_id": model_id, "resident": self.resident(),
+                        "zone": self.zone}
         model = await self.load(model_id)
         async with self.gpu:
             if not model.resident:   # freed by reconfigure(): load this id's current weights
                 await asyncio.to_thread(model.load, self.models[model_id])
             out = await asyncio.to_thread(model, smiles, fresh)
-        return {**out, "model_id": model_id, "resident": self.resident()}
+        return {**out, "model_id": model_id, "resident": self.resident(), "zone": self.zone}
 
     def resident(self) -> list:
         """Model ids this replica holds in memory now."""
@@ -320,11 +344,14 @@ class OF3Pool:
     async def status(self) -> dict:
         rss = int(open("/proc/self/statm").read().split()[1]) * resource.getpagesize() / 1e9
         return {"registry": {i: {k: v for k, v in m.items() if k != "checkpoint"} for i, m in self.models.items()},
-                "resident": self.resident(), "max_resident": MAX_RESIDENT, "replica_memory_gb": round(rss, 1)}
+                "resident": self.resident(), "max_resident": MAX_RESIDENT, "replica_memory_gb": round(rss, 1),
+                "zone": self.zone}
 
 
-@serve.deployment(num_replicas=1, ray_actor_options={"num_cpus": 1},
-                  user_config={"route": "ev71-v2"})
+@serve.deployment(ray_actor_options={"num_cpus": 1},
+                  autoscaling_config={"min_replicas": 1, "max_replicas": 3, "target_ongoing_requests": 32},
+                  max_ongoing_requests=100,   # requests wait here on GPU calls; Ray Serve's default is 5
+                  user_config={"route": "ev71-v2", "allow_fresh": False})
 @serve.ingress(api)
 class Viewer:
     def __init__(self, live: DeploymentHandle, pool: DeploymentHandle):
@@ -343,8 +370,11 @@ class Viewer:
 
     def reconfigure(self, cfg: dict):
         """route: the model id that answers this program's requests. Repointing it is how a
-        new version goes live. A /predict request can name another id."""
+        new version goes live. A /predict request can name another id.
+        allow_fresh: honor "fresh" (run the model even when the pose is cached). Off for a
+        shared room: 40 fresh requests on one OpenFold3 replica would queue for half an hour."""
         self.route = cfg["route"]
+        self.allow_fresh = cfg.get("allow_fresh", False)
 
     def answer_key(self, row, cif_path: str) -> dict:
         """For a molecule with a crystal structure: the live pose's ligand RMSD to that crystal,
@@ -385,7 +415,7 @@ class Viewer:
         if not smiles or len(smiles) > 300:
             return JSONResponse({"status": "failed", "error": "need a SMILES under 300 chars"}, 400)
         model_id = body.get("model") or self.route
-        fresh = bool(body.get("fresh"))   # ignore the cached pose: run the model for real
+        fresh = bool(body.get("fresh")) and self.allow_fresh   # run the model even if the pose is cached
         # The pose and affinity models run at the same time, each on its own replica.
         # multiplexed_model_id sends the pose request to a replica that holds that model.
         try:
@@ -401,15 +431,17 @@ class Viewer:
                "metrics": aff["metrics"], "affinity_status": aff["status"],
                "seconds": max(pose["seconds"], aff["seconds"]),
                "models": {"pose": pose["model"], "affinity": aff["model"]}}
-        c = canonical(smiles)
+        out["affinity_zone"] = aff.get("zone")
+        c = await asyncio.to_thread(canonical, smiles)
         if (row := self.known.get(c) if c else None) is not None and pose.get("cif_path"):
-            out.update(self.answer_key(row, pose["cif_path"]))
+            # RDKit scoring and alignment: in a thread, so the replica keeps serving others
+            out.update(await asyncio.to_thread(self.answer_key, row, pose["cif_path"]))
         return JSONResponse(out, 200 if out["status"] in ("ok", "cached") else 422)
 
     @api.get("/models")
     async def models_status(self):
         """The registry, the route, and which model ids the OF3Pool replica holds in memory."""
-        return {"route": self.route, **(await self.pool.status.remote())}
+        return {"route": self.route, "allow_fresh": self.allow_fresh, **(await self.pool.status.remote())}
 
     @api.get("/structure/pred/{key}/{cid}", response_class=PlainTextResponse)
     def pred(self, key: str, cid: str):

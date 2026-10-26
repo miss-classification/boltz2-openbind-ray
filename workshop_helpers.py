@@ -217,12 +217,18 @@ def show_complex(row, models=("boltz2", "openbind0"), height=420):
 def show_analog(cif_path, parent, label="new molecule (Boltz-2, live)", height=420):
     """A live prediction for a new molecule, moved onto the crystal of the compound it was
     made from: does the model keep the parent's binding mode?"""
+    show_aligned(pose_in_crystal_frame(str(cif_path), Path(parent["ref_pdb"])), parent, label, height)
+
+
+def show_aligned(pose_pdb, parent, label="new molecule (live)", height=420):
+    """Like show_analog, for a pose already moved onto the crystal (PDB text), such as the
+    `cif` field the Service's /predict returns with "format": "pdb"."""
     ref_pdb = Path(parent["ref_pdb"])
     ref_sdf = ref_pdb.with_name(ref_pdb.name.replace("_complex_ref.pdb", "_ligand_ref.sdf"))
     _viewer([{"text": ref_pdb.read_text(), "fmt": "pdb",
               "styles": [({}, {"cartoon": {"color": "#d6d3ce", "opacity": 0.55}})]},
              {"text": ref_sdf.read_text(), "fmt": "sdf", "styles": [({}, _stick(COLORS["crystal"]))]},
-             {"text": pose_in_crystal_frame(str(cif_path), ref_pdb), "fmt": "pdb",
+             {"text": pose_pdb, "fmt": "pdb",
               "styles": [({"chain": "B"}, _stick("#2e9e4f"))]}],
             legend=_chip(COLORS["crystal"], f"parent {parent['complex_name']} (crystal)") + _chip("#2e9e4f", label),
             height=height, zoom="ligands")

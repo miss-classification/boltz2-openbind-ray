@@ -130,23 +130,58 @@ class LiveModel:
 
     __del__ = free
 
-    def cache_files(self, smiles: str) -> list:
-        import hashlib
-        lig_id = "smi_" + hashlib.sha1(smiles.encode()).hexdigest()[:12]
-        return [self.pred.out / f"{lig_id}.cif", self.pred.out / f"{lig_id}.json"]
-
     def __call__(self, smiles: str, fresh: bool = False) -> dict:
-        """fresh: delete this molecule's cached pose first, so the model really runs."""
+        """fresh: run the model even if this pose is cached, then overwrite the cached copy. The
+        cache is shared (the Service and the notebook pool use the same folder), so it is never
+        deleted: other readers keep getting the old copy until the new one replaces it."""
         if not self.resident:
             raise RuntimeError(f"model {self.spec['version']} was freed; load() it again")
-        if fresh:
-            for f in self.cache_files(smiles):
-                f.unlink(missing_ok=True)
         t0 = time.time()
-        out = predict_one(self.pred, smiles)
+        if fresh:
+            self.pred._cached = lambda lig_id: None      # skip the cache read for this call only
+        try:
+            out = predict_one(self.pred, smiles)
+        finally:
+            self.pred.__dict__.pop("_cached", None)
         loaded_now, self.first = self.first, False
         out["source"] = ("cache" if out["status"] == "cached" else "loaded" if loaded_now else "memory")
         out["load_seconds"] = round(self.load_seconds, 1) if loaded_now else 0.0
         out["seconds"] = round(time.time() - t0 + out["load_seconds"], 1)   # the load is part of this request
         out["model"] = dict(self.spec)
         return out
+
+
+def cached_answer(out_dir, smiles: str):
+    """The cached pose for this SMILES in one model version's cache folder, shaped like
+    predict_one's answer, or None. Reads two files: no model, no GPU, no lock."""
+    import hashlib
+    import json
+    lig_id = "smi_" + hashlib.sha1(smiles.encode()).hexdigest()[:12]
+    cif, meta = Path(out_dir) / f"{lig_id}.cif", Path(out_dir) / f"{lig_id}.json"
+    if not (cif.exists() and meta.exists()):
+        return None
+    return {"ligand_id": lig_id, "status": "cached", "error": None, "metrics": json.loads(meta.read_text()),
+            "seconds": 0.0, "cif": cif.read_text(), "cif_path": str(cif), "source": "cache", "load_seconds": 0.0}
+
+
+def node_zone() -> str:
+    """The availability zone of the node this process runs on: the Ray node label Anyscale sets,
+    or EC2 instance metadata."""
+    try:
+        import ray
+        if ray.is_initialized():
+            zone = ray.get_runtime_context().get_node_labels().get("ray.io/availability-zone")
+            if zone:
+                return zone
+    except Exception:
+        pass
+    try:
+        import urllib.request
+        token = urllib.request.urlopen(urllib.request.Request(
+            "http://169.254.169.254/latest/api/token", method="PUT",
+            headers={"X-aws-ec2-metadata-token-ttl-seconds": "60"}), timeout=2).read().decode()
+        return urllib.request.urlopen(urllib.request.Request(
+            "http://169.254.169.254/latest/meta-data/placement/availability-zone",
+            headers={"X-aws-ec2-metadata-token": token}), timeout=2).read().decode()
+    except Exception:
+        return "unknown"

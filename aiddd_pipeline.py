@@ -134,6 +134,16 @@ LIVE_MODELS = {
     "ev71-v2": {"version": "ev71-v2", "name": "EV-A71 specialist v2: public fine-tune (8 GPUs, 1,000 steps)",
                 "checkpoint": str(OF3_FT_CKPT)},
 }
+# Notebook 03's demo compounds (§6.2): EV-A71 2A late follow-ons with a crystal structure, in no
+# model's training set. Their poses are cached for every LIVE_MODELS version before the workshop.
+DEMO_COMPOUNDS = {
+    "x7259a": "CSc1ncnc(N2CCC[C@@H]2C2CC2)c1CC(=O)N1CCC[C@H](C(N)=O)C1",
+    "x7608a": "CSc1ncnc(N(C)CC(F)(F)F)c1CC(=O)N1C[C@@H](C(N)=O)C[C@@H]2C[C@@H]21",
+    "x7024a": "CSc1ncnc(N2CCC3(CCCC3)C2)c1CC(=O)N1CCC[C@H](C(N)=O)C1",
+    "x6714a": "NC(=O)[C@H]1CCC(=O)N(c2cc3cnccc3c(F)c2F)C1",
+    "x7011a": "CC[C@H]1CCCN1c1ncnc(SC)c1CC(=O)N1CCC[C@H](C(N)=O)C1",
+    "x7101a": "CSc1ncnc(N2CCC3(CCCCC3)C2)c1CC(=O)N1CCC[C@H](C(N)=O)C1",
+}
 
 
 def latest_finetune_ckpt() -> Optional[Path]:
@@ -263,9 +273,14 @@ class Boltz2Predictor:
         return None
 
     def _save(self, lig_id, src_cif, metrics):
-        cif = self.out / f"{lig_id}.cif"
-        shutil.copy(src_cif, cif)
-        (self.out / f"{lig_id}.json").write_text(json.dumps(metrics))
+        # Write to a temporary name, then rename: a reader of the shared cache never sees a
+        # half-written file. The .json goes last, since _cached needs both files.
+        cif, meta = self.out / f"{lig_id}.cif", self.out / f"{lig_id}.json"
+        tmp = f".{os.getpid()}.tmp"
+        shutil.copy(src_cif, cif.with_name(cif.name + tmp))
+        os.replace(cif.with_name(cif.name + tmp), cif)
+        meta.with_name(meta.name + tmp).write_text(json.dumps(metrics))
+        os.replace(meta.with_name(meta.name + tmp), meta)
         return {"metrics": metrics, "cif": str(cif), "status": "ok"}
 
     def __call__(self, batch: pd.DataFrame) -> pd.DataFrame:
