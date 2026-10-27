@@ -19,17 +19,33 @@ import argparse
 import os
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import zipfile
 from pathlib import Path
 
 SHARED = Path(os.environ.get("AIDDD_SHARED", "/mnt/shared_storage/aiddd"))
 
-RELEASE_URL = "https://zenodo.org/api/records/22142262/files/OpenBind_EV-A71_2A.zip/content"
+# A byte-identical mirror of the Zenodo release (CC0, so mirroring is permitted),
+# measured at 30 MB/s against Zenodo's 0.5 MB/s: 4 seconds instead of 4 minutes, which
+# matters when a room downloads it at once. Set AIDDD_RELEASE_URL to override, e.g. back
+# to Zenodo: https://zenodo.org/api/records/22142262/files/OpenBind_EV-A71_2A.zip/content
+RELEASE_URL = os.environ.get(
+    "AIDDD_RELEASE_URL",
+    "https://github.com/miss-classification/boltz2-openbind-ray/releases/download/"
+    "data-v1/OpenBind_EV-A71_2A.zip")
 BENCHMARK_RAW = ("https://raw.githubusercontent.com/OpenBind-Consortium/EV-A71_2A_benchmark/main/"
                  "structure/processed_outputs/")
 BENCHMARK_FILES = ["final_cofolding_pose_data.parquet", "fragment_followon_similarity.csv",
                    "annotated_complexes.csv"]
+# Scored benchmark results for every model and target, plus the fine-tune loss curve
+# and the derived Mpro metadata (about 2 MB). Every table and figure at USE_GPUS = False
+# reads these, so a fresh cloud needs them before any notebook will display anything.
+RESULTS_BUNDLE = os.environ.get(
+    "AIDDD_RESULTS_BUNDLE",
+    "https://github.com/miss-classification/boltz2-openbind-ray/releases/download/"
+    "data-v1/aiddd-results-bundle.tar.gz")
+
 OF3_BASE = "https://openfold3-data.s3.amazonaws.com/openfold3-parameters/"
 OF3_CKPTS = {
     "of3-ob-2025-06-30-174k.pt": OF3_BASE + "of3-ob-2025-06-30-174k.pt",      # OpenBind-0
@@ -71,6 +87,19 @@ def setup_benchmark():
             download(BENCHMARK_RAW + f, out / f)
 
 
+def setup_results():
+    """Scored results for every model and target, so the notebooks display without a GPU."""
+    marker = SHARED / "results" / "ev71-2a"
+    if step("scored benchmark results (about 2 MB)", marker.exists()):
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = Path(tmp) / "results.tar.gz"
+            download(RESULTS_BUNDLE, bundle)
+            with tarfile.open(bundle) as t:
+                t.extractall(SHARED)
+    targets = sorted(p.name for p in (SHARED / "results").iterdir() if p.is_dir())
+    print(f"       scored targets: {', '.join(targets)}")
+
+
 def setup_boltz():
     cache = SHARED / "boltz_cache"
     if step("Boltz-2 weights and CCD", (cache / "boltz2_conf.ckpt").exists() and (cache / "boltz2_aff.ckpt").exists()):
@@ -100,6 +129,7 @@ def main():
 
     setup_release()
     setup_benchmark()
+    setup_results()
     setup_boltz()
     if not args.skip_of3:
         setup_of3()
