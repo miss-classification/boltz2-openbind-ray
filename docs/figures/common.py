@@ -1,6 +1,6 @@
 """Shared style, data loading and 3D drawing helpers for the README figures.
 
-Every figure is drawn from the workshop's own outputs under $AIDDD_SHARED
+Every figure is drawn from this template's own outputs under $AIDDD_SHARED
 (default /mnt/shared_storage/aiddd): crystal structures, predicted CIFs, the
 scored Parquet results, the per-node GPU logs and the Ray Train loss curve.
 """

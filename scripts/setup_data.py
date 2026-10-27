@@ -1,8 +1,13 @@
 """
-One-time setup: download the dataset, the published benchmark, and model weights.
+One-time setup: download the dataset, the published benchmark, scored results and weights.
 
-    python scripts/setup_data.py                 # everything (about 15 GB, 10 to 20 min)
-    python scripts/setup_data.py --skip-of3      # Boltz-2 only (about 6 GB)
+    python scripts/setup_data.py                 # data and scored results (about 500 MB, 1 to 3 min)
+    python scripts/setup_data.py --with-weights  # also Boltz-2 and OpenFold3 (about 15 GB, 10 to 20 min)
+    python scripts/setup_data.py --with-weights --skip-of3   # Boltz-2 only (about 6 GB)
+
+The default is enough to open every notebook with USE_GPUS = False: all tables,
+figures and the before/after comparison read the scored results downloaded here.
+Weights are only needed to predict or fine-tune, which is USE_GPUS = True.
 
 Everything lands under $AIDDD_SHARED (default /mnt/shared_storage/aiddd), which
 every node of a Workspace or Job can read. Each step is skipped if its output
@@ -39,8 +44,7 @@ BENCHMARK_RAW = ("https://raw.githubusercontent.com/OpenBind-Consortium/EV-A71_2
 BENCHMARK_FILES = ["final_cofolding_pose_data.parquet", "fragment_followon_similarity.csv",
                    "annotated_complexes.csv"]
 # Scored benchmark results for every model and target, plus the fine-tune loss curve
-# and the derived Mpro metadata (about 2 MB). Every table and figure at USE_GPUS = False
-# reads these, so a fresh cloud needs them before any notebook will display anything.
+# and the derived Mpro metadata (about 2 MB). Published alongside this template.
 RESULTS_BUNDLE = os.environ.get(
     "AIDDD_RESULTS_BUNDLE",
     "https://github.com/miss-classification/boltz2-openbind-ray/releases/download/"
@@ -49,8 +53,8 @@ RESULTS_BUNDLE = os.environ.get(
 OF3_BASE = "https://openfold3-data.s3.amazonaws.com/openfold3-parameters/"
 OF3_CKPTS = {
     "of3-ob-2025-06-30-174k.pt": OF3_BASE + "of3-ob-2025-06-30-174k.pt",      # OpenBind-0
+    "of3-p2-145k.pt": OF3_BASE + "of3-p2-145k.pt",                            # the general model 02 fine-tunes
     "of3p2-ft-ev2a.ckpt": OF3_BASE + "openbind/of3p2-ft-ev2a.ckpt",           # fine-tuned on EV-A71 2A
-    "of3-p2-145k.pt": OF3_BASE + "of3-p2-145k.pt",                            # its starting weights
 }
 
 
@@ -101,7 +105,7 @@ def setup_results():
 
 
 def setup_tune_summaries():
-    """Ray Tune sweep summaries for the appendix of notebook 02, shipped in docs/data (about 1 KB)."""
+    """Ray Tune sweep summaries for Appendix A of notebook 02, shipped in docs/data (about 1 KB)."""
     src = Path(__file__).resolve().parents[1] / "docs" / "data"
     for f in sorted(src.rglob("summary.csv")):
         dest = SHARED / f.relative_to(src)
@@ -129,7 +133,9 @@ def setup_of3():
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--skip-of3", action="store_true", help="skip the three OpenFold3 checkpoints (about 11 GB)")
+    ap.add_argument("--with-weights", action="store_true",
+                    help="also download Boltz-2 and OpenFold3 weights (about 15 GB), needed only to predict")
+    ap.add_argument("--skip-of3", action="store_true", help="skip the two OpenFold3 checkpoints (about 9 GB)")
     args = ap.parse_args()
 
     print(f"Shared data directory: {SHARED}")
@@ -141,10 +147,13 @@ def main():
     setup_benchmark()
     setup_results()
     setup_tune_summaries()
-    setup_boltz()
-    if not args.skip_of3:
-        setup_of3()
-    print("\nSetup complete. Next: run the smoke test (see README, step 3).")
+    if args.with_weights:
+        setup_boltz()
+        if not args.skip_of3:
+            setup_of3()
+    else:
+        print("[skip] model weights. Add --with-weights to predict or fine-tune on GPUs.")
+    print("\nSetup complete. Open 01_ray_and_offline_inference.ipynb and run the cells in order.")
 
 
 if __name__ == "__main__":

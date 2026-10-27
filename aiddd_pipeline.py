@@ -50,9 +50,6 @@ OF3_LEGACY_PY = "/opt/of3-legacy/bin/python"          # its Python, for Ray acto
 OF3_FT_CKPT = OF3_CACHE / "of3p2-ft-ev2a.ckpt"
 OF3_FT_URL = ("https://openfold3-data.s3.amazonaws.com/openfold3-parameters/"
               "openbind/of3p2-ft-ev2a.ckpt")
-# The EMA weights of OF3_FT_CKPT alone, the only part inference reads: 2.3 GB instead of 6.7 GB,
-# so serving it loads like OF3_P2_CKPT. Made once from OF3_FT_CKPT (ckpt["ema"]["params"]).
-OF3_FT_WEIGHTS = OF3_CACHE / "of3p2-ft-ev2a-weights.pt"
 OF3_P2_CKPT = OF3_CACHE / "of3-p2-145k.pt"   # OF3-p2, the starting weights of of3ft
 OF3_P2_URL = "https://openfold3-data.s3.amazonaws.com/openfold3-parameters/of3-p2-145k.pt"
 PRED_ROOT = SHARED / "predictions"
@@ -124,9 +121,16 @@ MODELS = {
     "of3ray": ("OF3 fine-tuned with Ray Train", None),   # your own weights from finetune_ray_train.py
 }
 FINETUNE_RUNS = SHARED / "finetune" / "runs"
-# Our fine-tune for the Serve demo: OF3-p2 145k on 66 EV-A71 fragments, 1,000 steps on 8 L4s
-OF3_OURS_CKPT = (FINETUNE_RUNS / "ft-p2-evfrag-1000s-8g-1023-0139"
-                 / "checkpoint_2026-10-23_04-05-55.886640" / "of3_ev71_ft.pt")
+# The fine-tune the Serve demo calls "ours": OF3-p2 145k on 66 EV-A71 fragments, 1,000 steps
+# on 8 L4s. This is the run the published results come from. A run name carries the date it
+# started, so your own fine-tune from notebook 02 is never at this path: fall back to the most
+# recent one on this cluster.
+_OURS_PUBLISHED = (FINETUNE_RUNS / "ft-p2-evfrag-1000s-8g-1023-0139"
+                   / "checkpoint_2026-10-23_04-05-55.886640" / "of3_ev71_ft.pt")
+_OURS_FOUND = sorted(FINETUNE_RUNS.glob("ft-p2-*/checkpoint_*/of3_ev71_ft.pt"),
+                     key=lambda p: p.stat().st_mtime)
+OF3_OURS_CKPT = (_OURS_PUBLISHED if _OURS_PUBLISHED.exists()
+                 else (_OURS_FOUND[-1] if _OURS_FOUND else _OURS_PUBLISHED))
 # The served models, by model id. "version" names the weights and their pose cache folder
 # (predictions/live_of3ft_<version>), so never reuse one for new weights. jobs/demo_*.yaml
 # carry the same entries as Service config.
@@ -138,15 +142,15 @@ LIVE_MODELS = {
         "pose_cache": str(SHARED / "predictions" / "live_of3ft_p2-145k"),
     },
     "ev71-v1": {
-        "version": "ev71-v1", 
+        "version": "ev71-v1",
         "name": "EV-A71 specialist v1: fine-tuned with Ray Train (8 L4s, 1,000 steps)",
         "checkpoint": str(OF3_OURS_CKPT),
         "pose_cache": str(SHARED / "predictions" / "live_of3ft_ev71-v1"),
     },
     "ev71-v2": {
-        "version": "ev71-v2", 
+        "version": "ev71-v2",
         "name": "EV-A71 specialist v2: OpenBind fine-tune (released)",
-        "checkpoint": str(OF3_FT_WEIGHTS),  # was OF3_FT_CKPT: same model
+        "checkpoint": str(OF3_FT_CKPT),
         "pose_cache": str(SHARED / "predictions" / "live_of3ft_ev71-v2"),
     },
 }

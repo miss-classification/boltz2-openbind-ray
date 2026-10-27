@@ -1,5 +1,5 @@
 """
-Display helpers for the workshop notebooks: an inline 3D viewer and result tables.
+Display helpers for the template notebooks: an inline 3D viewer and result tables.
 
 The Ray code lives in the notebook itself. This module only draws things, so the
 notebook cells stay about Ray and the science.
@@ -17,8 +17,10 @@ from IPython.display import HTML, display
 
 from aiddd_pipeline import SHARED, STAGES, TARGETS, pose_in_crystal_frame, relocate_paths
 
-USER = os.environ.get("ANYSCALE_USERNAME") or os.environ.get("USER") or "attendee"
-MINE = SHARED / "workshop" / USER          # everything this attendee writes goes here
+USER = os.environ.get("ANYSCALE_USERNAME") or os.environ.get("USER") or "user"
+# Everything you write goes here. AIDDD_MINE keeps it off SHARED when SHARED is
+# read-only, as it is when the image ships the data.
+MINE = Path(os.environ.get("AIDDD_MINE") or SHARED / "runs" / USER)
 
 MODEL_NAMES = {"boltz2": "Boltz-2", "openbind0": "OpenBind-0", "of3p2": "OpenFold3 145k (general)",
                "of3ray": "Fine-tuned with Ray Train", "of3ft": "OpenBind fine-tune (released)"}
@@ -232,12 +234,6 @@ def show_live_overlay(row, poses, height=420):
     _viewer(shown, legend=f"<b>{row['complex_name']}</b><br>" + "".join(chips), height=height, zoom="ligands")
 
 
-def show_analog(cif_path, parent, label="new molecule (Boltz-2, live)", height=420):
-    """A live prediction for a new molecule, moved onto the crystal of the compound it was
-    made from: does the model keep the parent's binding mode?"""
-    show_aligned(pose_in_crystal_frame(str(cif_path), Path(parent["ref_pdb"])), parent, label, height)
-
-
 def show_aligned(pose_pdb, parent, label="new molecule (live)", height=420):
     """Like show_analog, for a pose already moved onto the crystal (PDB text), such as the
     `cif` field the Service's /predict returns with "format": "pdb"."""
@@ -247,6 +243,20 @@ def show_aligned(pose_pdb, parent, label="new molecule (live)", height=420):
               "styles": [({}, {"cartoon": {"color": "#d6d3ce", "opacity": 0.55}})]},
              {"text": ref_sdf.read_text(), "fmt": "sdf", "styles": [({}, _stick(COLORS["crystal"]))]},
              {"text": pose_pdb, "fmt": "pdb",
+              "styles": [({"chain": "B"}, _stick("#2e9e4f"))]}],
+            legend=_chip(COLORS["crystal"], f"parent {parent['complex_name']} (crystal)") + _chip("#2e9e4f", label),
+            height=height, zoom="ligands")
+
+
+def show_analog(cif_path, parent, label="new molecule (Boltz-2, live)", height=420):
+    """A live prediction for a new molecule, moved onto the crystal of the compound it was
+    made from: does the model keep the parent's binding mode?"""
+    ref_pdb = Path(parent["ref_pdb"])
+    ref_sdf = ref_pdb.with_name(ref_pdb.name.replace("_complex_ref.pdb", "_ligand_ref.sdf"))
+    _viewer([{"text": ref_pdb.read_text(), "fmt": "pdb",
+              "styles": [({}, {"cartoon": {"color": "#d6d3ce", "opacity": 0.55}})]},
+             {"text": ref_sdf.read_text(), "fmt": "sdf", "styles": [({}, _stick(COLORS["crystal"]))]},
+             {"text": pose_in_crystal_frame(str(cif_path), ref_pdb), "fmt": "pdb",
               "styles": [({"chain": "B"}, _stick("#2e9e4f"))]}],
             legend=_chip(COLORS["crystal"], f"parent {parent['complex_name']} (crystal)") + _chip("#2e9e4f", label),
             height=height, zoom="ligands")
@@ -292,7 +302,7 @@ def show_prediction(cif_text, label="", height=380):
 # ---------------------------------------------------------------------------
 def _parquet(path):
     files = sorted(Path(path).glob("*.parquet"))
-    return pd.concat([pd.read_parquet(f) for f in files], ignore_index=True) if files else None
+    return relocate_paths(pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)) if files else None
 
 
 def ours_run():
@@ -308,10 +318,9 @@ def load_results(target):
     """Scored binding events from the full benchmark, on the curated set (valid crystal
     reference, no suspected crystallographic artefact), one row per crystal complex.
     Adds the 145k base (of3p2_*) and our fine-tune (of3ray_*) where they have been scored."""
-    df = relocate_paths(_parquet(SHARED / "results" / target))
+    df = _parquet(SHARED / "results" / target)
     for path, key in ((BASE_RESULTS / target, "of3p2"), (SHARED / f"results_{ours_run()}" / target, "of3ray")):
         extra = _parquet(path)
-        extra = relocate_paths(extra) if extra is not None else None
         if extra is not None and f"{key}_lig_rmsd" in extra:
             cols = ["complex_name"] + [c for c in extra.columns if c.startswith(f"{key}_")]
             df = df.drop(columns=[c for c in cols[1:] if c in df]).merge(extra[cols], on="complex_name", how="left")
