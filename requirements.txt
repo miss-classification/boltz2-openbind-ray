@@ -3,6 +3,7 @@
 boltz[cuda]==2.2.1
 openfold3==0.5.0
 numpy==1.26.4      # numba, used by the boltz featurizer, needs numpy<=2.1
+biotite<1.8        # 1.8 makes AtomArray a Sequence, which Lightning rebuilds and breaks (see Dockerfile)
 biopython==1.84
 pandas==2.3.3
 pyarrow==23.0.1
