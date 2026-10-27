@@ -16,6 +16,3 @@
 # are typically recreatable from requirements files and don't need to be included in snapshots.
 # The ** pattern ensures all .venv directories are excluded regardless of location in your project.
 **/.venv/
-
-# Python bytecode
-**/__pycache__/

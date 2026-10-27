@@ -10,7 +10,7 @@
 # Add our fine-tune, ev71-v1, and route EV-A71 2A requests to it. It loads on its first request,
 # next to the base model: one replica, two models in memory.
 name: aiddd-viewer
-image_uri: anyscale/image/aiddd-boltz2-of3:4
+image_uri: us-docker.pkg.dev/anyscale-workspace-templates/workspace-templates/cofolding-finetune-serve:2.59.0
 working_dir: .
 excludes: [image, docs, slides, scripts, jobs, .git, .bin, __pycache__, "*.ipynb", "*.md", .ipynb_checkpoints]   # only what the app runs; edits elsewhere leave --in-place a pure reconfigure
 env_vars:

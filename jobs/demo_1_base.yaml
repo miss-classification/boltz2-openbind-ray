@@ -10,7 +10,7 @@
 # The registry holds the base model only; every request goes to it. Its weights load on the
 # first request and stay in memory.
 name: aiddd-viewer
-image_uri: anyscale/image/aiddd-boltz2-of3:4
+image_uri: us-docker.pkg.dev/anyscale-workspace-templates/workspace-templates/cofolding-finetune-serve:2.59.0
 working_dir: .
 excludes: [image, docs, slides, scripts, jobs, .git, .bin, __pycache__, "*.ipynb", "*.md", .ipynb_checkpoints]   # only what the app runs; edits elsewhere leave --in-place a pure reconfigure
 env_vars:

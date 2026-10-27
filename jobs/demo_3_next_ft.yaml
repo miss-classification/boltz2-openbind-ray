@@ -7,11 +7,11 @@
 #   anyscale service deploy -f jobs/demo_2_ft.yaml --in-place      # add the fine-tune
 #   anyscale service deploy -f jobs/demo_3_next_ft.yaml --in-place # add the next fine-tune
 #
-# Add the next fine-tune, ev71-v2, and route to it. The replica holds up to 3 models
+# Add the second specialist, ev71-v2, and route to it. The replica holds up to 3 models
 # (MAX_RESIDENT in serve_viewer.py), so this third id evicts nothing: all 3 stay in memory.
 # ev71-v1 stays registered too, so one request by id, or a route change, rolls back.
 name: aiddd-viewer
-image_uri: anyscale/image/aiddd-boltz2-of3:4
+image_uri: us-docker.pkg.dev/anyscale-workspace-templates/workspace-templates/cofolding-finetune-serve:2.59.0
 working_dir: .
 excludes: [image, docs, slides, scripts, jobs, .git, .bin, __pycache__, "*.ipynb", "*.md", .ipynb_checkpoints]   # only what the app runs; edits elsewhere leave --in-place a pure reconfigure
 env_vars:
@@ -43,7 +43,6 @@ applications:
             ev71-v2:
               version: ev71-v2
               name: "EV-A71 specialist v2: OpenBind fine-tune (released)"
-              # checkpoint: /mnt/shared_storage/aiddd/of3_cache/of3p2-ft-ev2a.ckpt   # full training checkpoint (6.7 GB): revert to this if needed
-              checkpoint: /mnt/shared_storage/aiddd/of3_cache/of3p2-ft-ev2a-weights.pt   # its EMA weights only (2.3 GB): same model, loads like base
+              checkpoint: /mnt/shared_storage/aiddd/of3_cache/of3p2-ft-ev2a.ckpt
       - name: Viewer
         user_config: {route: ev71-v2, step: "demo_3: base model + our fine-tune + public fine-tune (ev71-v2)"}

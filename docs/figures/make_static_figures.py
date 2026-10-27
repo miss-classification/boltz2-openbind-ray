@@ -1,4 +1,4 @@
-"""Static README figures, drawn from the workshop outputs.
+"""Static README figures, drawn from the benchmark outputs.
 
     python docs/figures/make_static_figures.py
 
@@ -222,7 +222,7 @@ def finetune():
 def throughput():
     """Predictors per GPU and vCPUs per node, from the sweep of 2026-10-22.
 
-    $AIDDD_SHARED/workshop/pack/{cpu8-20261022-085733,cpu16-20261022-085429}/summary.json:
+    $AIDDD_SHARED/runs/pack/{cpu8-20261022-085733,cpu16-20261022-085429}/summary.json:
     1 L4, EV-A71 2A, batches of 8. Each point is 64 ligands for OpenFold3, 24 for Boltz-2.
     """
     sec = {

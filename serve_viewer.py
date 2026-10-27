@@ -85,7 +85,6 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
 <form id="live" onsubmit="predict(event)"><h2>Live prediction</h2>
  <div id="step"></div>
  <input id="smi" placeholder="SMILES, e.g. CNC(=O)c1nn(C)c2ccccc12" style="width:100%;box-sizing:border-box;padding:5px">
- <select id="model" style="margin:6px 4px 6px 0;padding:4px" title="The OpenFold3 model that predicts the pose"></select>
  <button style="margin:6px 0">Predict</button>
  <label id="freshbox" style="display:none;font-size:12px;color:#444" title="Run the model even if this pose is cached: about 25 s with the model in memory, up to 100 s if it must load first">
   <input type="checkbox" id="fresh"> run live, skip the cached pose</label>
@@ -153,7 +152,7 @@ async function predict(ev){
                           : "predicting (cached poses return at once; a new molecule takes 1 to 2 minutes)...";
   document.getElementById("lread").textContent = "";
   const r = await fetch(u("/predict"), {method:"POST", headers:{"Content-Type":"application/json"},
-                                     body: JSON.stringify({smiles: smi, fresh, model: document.getElementById("model").value || null})});
+                                     body: JSON.stringify({smiles: smi, fresh})});
   const j = await r.json();
   if(!r.ok || j.status === "failed" || j.status === "skipped"){ st.textContent = "failed: " + (j.error || r.status); return; }
   const m = j.metrics, f = v => (typeof v === "number" ? v.toFixed(2) : "n/a");
@@ -222,11 +221,6 @@ async function pool(){
       `In memory on the OpenFold3 replica (up to ${p.max_resident}): ` +
       (p.resident.length ? p.resident.map(i => `<code>${i}</code>`).join(" ") : "none yet") + `.` +
       (p.zone ? ` OpenFold3 replica in <code>${p.zone}</code>.` : "");
-    // The model menu: the program's current model (the default), or any registered model id
-    const sel = document.getElementById("model"), keep = sel.value;
-    sel.innerHTML = `<option value="">Current model (${p.route})</option>` +
-      Object.entries(p.registry).map(([i, m]) => `<option value="${i}">${i}: ${m.name}</option>`).join("");
-    sel.value = keep in p.registry ? keep : "";
     document.getElementById("freshbox").style.display = p.allow_fresh ? "inline" : "none";
     const step = document.getElementById("step");
     step.textContent = p.step || "Not on a demo step: apply jobs/demo_1_base.yaml";
@@ -267,7 +261,6 @@ def live_cache(pred, version: str) -> Path:
 # of a node's free memory (the object store gets the rest), about 22 GB here, so it never places two of
 # them on one node. The reservation is for placement only: it does not cap what a replica uses.
 GPU_REPLICA_MEMORY = 15e9
-
 
 # Ray 2.59 runs a sync method on the replica's event loop, so a minute-long prediction there would
 # hold up every other request. These deployments answer cached poses straight from disk, and run a

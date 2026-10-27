@@ -1,7 +1,7 @@
-# Anyscale Job: the workshop's headline run. Boltz-2 and OpenBind-0 on the same
+# Anyscale Job: the headline run. Boltz-2 and OpenBind-0 on the same
 # ligands, side by side, inside a 20-minute slot.
 #
-#   anyscale job submit -f jobs/workshop.yaml --name workshop
+#   anyscale job submit -f jobs/live_run.yaml --name aiddd-live
 #
 # Every setting here comes from the packing sweep of 2026-10-22 (pack8b, pack16b,
 # scripts/pack_sweep.py) and the 308-ligand run of 2026-10-20 (live16-test).
@@ -38,8 +38,8 @@
 # or cut the count with --stage alone.
 #
 # Both groups are pinned: a cold start of 20 GPU nodes takes longer than the demo.
-name: aiddd-workshop
-image_uri: anyscale/image/aiddd-boltz2-of3:4
+name: aiddd-live
+image_uri: us-docker.pkg.dev/anyscale-workspace-templates/workspace-templates/cofolding-finetune-serve:2.59.0
 working_dir: .
 excludes: [image, docs, slides, .git, __pycache__, "*.ipynb"]
 env_vars:
@@ -59,7 +59,7 @@ compute_config:
       max_nodes: 4
   enable_cross_zone_scaling: true
 entrypoint: >-
-  RUN=/mnt/shared_storage/aiddd/workshop/demo/$(date +%Y%m%d-%H%M%S) &&
+  RUN=/mnt/shared_storage/aiddd/runs/demo/$(date +%Y%m%d-%H%M%S) &&
   python aiddd_pipeline.py --target ev71-2a --stage "late follow-on"
   --models boltz2,openbind0 --gpu-split boltz2=14,openbind0=6
   --boltz-per-gpu 2 --of3-per-gpu 2 --cpus-per-gpu-node 16

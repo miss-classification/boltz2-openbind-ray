@@ -1,49 +1,121 @@
-# Co-folding at Scale: Benchmark, Fine-Tune and Serve on Ray
+# Fine-tune and serve a co-folding model on GPUs with Ray
+
+<div align="left">
+  <a target="_blank" href="https://console.anyscale.com/template-preview/cofolding-finetune-serve"><img src="https://img.shields.io/badge/🚀 Run_on-Anyscale-9hf"></a>&nbsp;
+  <a href="https://github.com/anyscale/templates/tree/main/templates/cofolding-finetune-serve" role="button"><img src="https://img.shields.io/static/v1?label=&message=View%20On%20GitHub&color=586069&logo=github&labelColor=2f363d"></a>&nbsp;
+</div>
+
+**⏱️ Time to complete**: 60 min without GPUs, 2 h with
+
+> **No GPU needed to start.** Every result in this README, and notebooks 01 and 02, run on CPU from
+> stored results. GPUs are only needed to predict, fine-tune or serve live: set `USE_GPUS = True` when you are ready.
 
 Co-folding models predict how a drug candidate binds to its protein target, using only the protein
-sequence and the molecule's chemical structure [[4]](#ref-4). Published accuracy numbers usually come from curated
+sequence and the molecule's chemical structure [4]. Published accuracy numbers usually come from curated
 benchmarks that look like the models' training data. Real drug discovery is harder: a single binding
 pocket, hundreds of related compounds, and new chemistry that the model has never seen.
 
-This repository tests co-folding models in that setting, fine-tunes a general model on 1 target's fragment
+This template tests co-folding models in that setting, fine-tunes a general model on 1 target's fragment
 structures, and runs the full workflow on Ray.
 
 - **Data:** 3 antiviral drug discovery campaigns with 2,147 experimentally solved protein-ligand
-  structures [[1]](#ref-1), [[12]](#ref-12).
-- **Models:** Boltz-2 [[2]](#ref-2), OpenFold3 [[3]](#ref-3) with the OpenBind-0 weights [[1]](#ref-1), the general OpenFold3
+  structures [1], [12].
+- **Models:** Boltz-2 [2], OpenFold3 [3] with the OpenBind-0 weights [1], the general OpenFold3
   145k checkpoint, and OpenFold3 fine-tuned on EV-A71 2A fragments (the OpenBind release and our own Ray Train runs).
 - **Workflow on Ray:** distributed inference, pose scoring, fine-tuning, hyperparameter search and a live
-  prediction service [[13]](#ref-13).
+  prediction service [13].
 
-The repository accompanies a hands-on workshop at the AI Drug Discovery & Development Summit 2026, in 3
-notebooks: `01_ray_and_offline_inference.ipynb`, `02_train_and_tune.ipynb` and `03_serve.ipynb`. Each one
-stands alone, so you can start at any of the 3. It can also be run as a standalone benchmark.
+The template began as a hands-on workshop at the AI Drug Discovery & Development Summit 2026. It is organized as 3
+notebooks, and each one stands alone, so you can start at any of the 3. It also runs as a standalone benchmark.
 
-![The workflow end to end: question, crystal structure, prediction, scoring and scale-up](docs/images/workshop.gif)
+![The workflow end to end: question, crystal structure, prediction, scoring and scale-up](https://raw.githubusercontent.com/anyscale/templates/main/templates/cofolding-finetune-serve/docs/images/workflow.gif)
 
 <sub>Experimental structures and model outputs for EV-A71 2A compound x7259a.</sub>
 
 | Target | Source | Binding events | Compounds | With measured affinity |
 |---|---|---|---|---|
-| EV-A71 2A protease | OpenBind release [[1]](#ref-1) | 925 | 699 | 601 (pKD) |
-| SARS-CoV-2 main protease (Mpro) | ASAP Discovery and COVID Moonshot [[12]](#ref-12), via Fragalysis | 628 | 308 | 164 (pIC50) |
+| EV-A71 2A protease | OpenBind release [1] | 925 | 699 | 601 (pKD) |
+| SARS-CoV-2 main protease (Mpro) | ASAP Discovery and COVID Moonshot [12], via Fragalysis | 628 | 308 | 164 (pIC50) |
 | MERS-CoV main protease (Mpro) | ASAP Discovery, via Fragalysis | 594 | 285 | 142 (pIC50) |
 
-## Contents
+## Get the code
 
-- [Key findings](#key-findings)
-- [Background](#background)
-- [Study design](#study-design)
-- [Results](#results)
-- [Interactive viewer and live prediction](#interactive-viewer-and-live-prediction)
-- [System design on Ray](#system-design-on-ray)
-- [Repository layout](#repository-layout)
-- [Getting started](#getting-started)
-- [Runbook](#runbook)
-- [Configuration reference](#configuration-reference)
-- [Troubleshooting](#troubleshooting)
-- [Data sources and licenses](#data-sources-and-licenses)
-- [References](#references)
+The Workspace this template opens already contains the code. To work outside Anyscale:
+
+```bash
+git clone https://github.com/anyscale/templates && cd templates/templates/cofolding-finetune-serve
+```
+
+## Prerequisites
+
+- Intermediate-level Python experience
+- Familiarity with structure prediction or molecular docking is helpful, not required. The Background
+  section below explains every term the notebooks use
+- GPUs are optional for notebooks 01 and 02, which display stored results without them. Notebook 03 runs a
+  live service, so it needs 1 L4 GPU or an already deployed Service
+
+## Start here
+
+Every result in this README, and notebooks 01 and 02, run without a GPU. The steps below take about a minute on CPU.
+
+**1. Download the data and scored results** (126 MB, a few seconds). Run the next cell:
+
+
+```python
+!python scripts/setup_data.py
+```
+
+**2. Open a notebook.** Start with 01, or jump to the Ray library you care about:
+
+| Notebook | Ray library | What you do | Without GPUs (default) | With GPUs (`USE_GPUS = True`) |
+|---|---|---|---|---|
+| `01_ray_and_offline_inference.ipynb` | Ray Core, Ray Data | Tasks, actors and objects, then distributed prediction and pose scoring across 3 campaigns | Every table and figure, from stored predictions | Predicts live on L4 GPUs |
+| `02_train_and_tune.ipynb` | Ray Train, Ray Tune | Fine-tune OpenFold3 across 8 GPUs, resume after a lost spot node, sweep the learning rate | The full recorded training run and both sweeps | A short live fine-tune, about 10 minutes |
+| `03_serve.ipynb` | Ray Serve | One multiplexed deployment serving a base model and two target specialists, swapped in place with no restart | Every step, against a deployed Service (step 3) | Starts Ray Serve in the Workspace on 1 L4 GPU |
+
+Run the cells of each notebook in order. Each notebook has a Setup cell near the top with these settings:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `USE_GPUS` | `False` | `False` loads stored results for every GPU step. `True` runs them live and starts GPU nodes |
+| `AIDDD_SHARED` | `/mnt/shared_storage/aiddd` | Environment variable: where data, weights and results live. Every node of a Workspace or Job reads it |
+| `AIDDD_SERVICE_URL` | unset | Environment variable holding the prediction service address for notebook 03. Unset, the notebook starts Ray Serve in the Workspace instead (needs `USE_GPUS = True`) |
+
+**3. Notebook 03 needs a prediction service.** Every request in it goes to an Anyscale Service, so
+either set `AIDDD_SERVICE_URL` to one that is already running, or deploy your own first (about 10
+minutes, 1 L4). Notebooks 01 and 02 need neither.
+
+```bash
+anyscale service deploy -f jobs/service.yaml                   # once, then it stays up
+anyscale service deploy -f jobs/demo_1_base.yaml --in-place    # register the base model
+```
+
+`demo_2_ft.yaml` and `demo_3_next_ft.yaml` also register `ev71-v1`, the fine-tune notebook 02
+produces. Deploy those only once a run of notebook 02 has written a checkpoint, because the weights
+are not part of the download in step 1.
+
+**4. To run the GPU steps live**, download the model weights (about 15 GB, 10 to 20 minutes), then set
+`USE_GPUS = True` in the Setup cell:
+
+```bash
+python scripts/setup_data.py --with-weights   # Boltz-2 and OpenFold3
+python scripts/prepare_mpro.py                # only to predict on the 2 Mpro targets, about 10 min
+```
+
+The Workspace has a limited number of GPUs, so run the cells of each notebook in order. When notebook 03
+starts Ray Serve in the Workspace, the application holds a GPU until the final cell stops it. Pointing
+`AIDDD_SERVICE_URL` at a deployed Anyscale Service instead uses no Workspace GPU at all.
+
+**5. Check your setup** (optional, CPU, about 1 minute). This cell confirms that the downloaded results
+reproduce the published accuracy figures and the training loss curve:
+
+
+```python
+!python tests/test_template.py
+```
+
+To go beyond the notebooks, for example to benchmark a whole target or train a model of your own,
+see Running at full scale below.
 
 ---
 
@@ -53,7 +125,7 @@ stands alone, so you can start at any of the 3. It can also be run as a standalo
   on EV-A71 2A; the general OpenFold3 145k model reaches 88% and 24%.
 - **OpenBind-0 is an in-distribution reference, not a generalization test.** It reaches 91% on EV-A71 2A late
   follow-ons, but it comes from the consortium that produced these structures, and its training cutoff is later
-  than almost all of them. On EV-A71 2A fragments it reaches 28%.
+  than almost all of them. On EV-A71 2A fragments it reaches 28%. Results involving it carry that caveat.
 - **Fine-tuning on fragment structures closes much of the gap.** Starting from 145k and training only on the
   66 fragment-screen structures, accuracy on held-out late follow-ons rises from 23.9% to 44.8% in 2.4 hours
   on 8 L4 GPUs. The OpenBind team's released checkpoint, from the same starting weights, reaches 78.1%.
@@ -87,23 +159,23 @@ because it selects the top-ranked of 25 poses and uses a different MSA and align
 ### Co-folding prediction
 
 A co-folding model receives only the protein sequence and the ligand's SMILES (Simplified Molecular
-Input Line Entry System) string, a line of text that encodes the molecule's atoms and bonds [[5]](#ref-5). It
-predicts the protein structure and the ligand pose together [[4]](#ref-4), so the pocket can change shape to fit the ligand. This
+Input Line Entry System) string, a line of text that encodes the molecule's atoms and bonds [5]. It
+predicts the protein structure and the ligand pose together [4], so the pocket can change shape to fit the ligand. This
 matters for EV-A71 2A: a loop next to the active site is closed in the empty protein and opens when a
 ligand binds. Docking into a fixed protein structure fails in exactly this case.
 
-![How a co-folding model predicts a binding pose](docs/images/cofolding_explained.gif)
+![How a co-folding model predicts a binding pose](https://raw.githubusercontent.com/anyscale/templates/main/templates/cofolding-finetune-serve/docs/images/cofolding_explained.gif)
 
 The models also use a **multiple sequence alignment (MSA)**, a set of related protein sequences from
 other species. Residues that change together during evolution are usually in contact in 3D, and this
 signal drives much of the folding accuracy. Every complex of a target shares the same protein, so the
-pipeline computes 1 MSA per target in advance [[8]](#ref-8).
+pipeline computes 1 MSA per target in advance [8].
 
 ### Pose evaluation
 
 1. Superpose the predicted protein on the crystal protein.
 2. Measure the average distance between matching ligand atoms. This is the **ligand RMSD**.
-3. Count the pose as correct if the RMSD is below **2 Å**, about the length of a chemical bond [[9]](#ref-9).
+3. Count the pose as correct if the RMSD is below **2 Å**, about the length of a chemical bond [9].
 
 Above 2 Å, the ligand is usually in the pocket but turned the wrong way. Any design idea based on such
 a pose is unreliable.
@@ -116,22 +188,22 @@ a pose is unreliable.
 - **Follow-on design.** Medicinal chemists grow the best fragments into larger, more potent compounds
   over several design cycles.
 
-![From fragment screen to optimized compound](docs/images/campaign_explained.gif)
+![From fragment screen to optimized compound](https://raw.githubusercontent.com/anyscale/templates/main/templates/cofolding-finetune-serve/docs/images/campaign_explained.gif)
 
 ### Generalization to new targets and chemistry
 
-- Co-folding models are trained on the Protein Data Bank [[6]](#ref-6), which covers some protein families well
+- Co-folding models are trained on the Protein Data Bank [6], which covers some protein families well
   and others poorly.
-- A model can do well on benchmarks that resemble its training data and poorly on a new target [[7]](#ref-7).
+- A model can do well on benchmarks that resemble its training data and poorly on a new target [7].
 - The OpenBind complexes have a median similarity of about 40 to public structures released before 2021.
-  Published co-folding success rates are 80 to 90% above a similarity of 80, and 10 to 40% below 50 [[1]](#ref-1), [[7]](#ref-7).
+  Published co-folding success rates are 80 to 90% above a similarity of 80, and 10 to 40% below 50 [1], [7].
 - Splitting results by campaign stage tests the same question from the chemistry side: follow-on
   compounds move further from anything the model has seen.
 
 ### Affinity prediction
 
 Pose is a geometry problem. Affinity is a free energy, which also depends on entropy, water displaced
-from the pocket and protein flexibility. The OpenBind study [[1]](#ref-1) reports a striking negative result: a
+from the pocket and protein flexibility. The OpenBind study [1] reports a striking negative result: a
 baseline that uses only molecular weight ranked compounds better than every structure-based method.
 Larger molecules tend to bind more tightly, and a model that learns only this trend has learned nothing
 about the pocket.
@@ -151,11 +223,11 @@ most relevant to a discovery team.
 
 | Key | Model | Notes |
 |---|---|---|
-| `boltz2` | Boltz-2 [[2]](#ref-2) | Predicts pose and binding affinity |
-| `openbind0` | OpenFold3 [[3]](#ref-3) with the OpenBind-0 weights [[1]](#ref-1) | General-purpose co-folding model |
+| `boltz2` | Boltz-2 [2] | Predicts pose and binding affinity |
+| `openbind0` | OpenFold3 [3] with the OpenBind-0 weights [1] | General-purpose co-folding model |
 | `of3p2` | OpenFold3 145k (`of3-p2-145k.pt`), a general model that predates the OpenBind data | Starting point of both fine-tunes; runs in OpenFold3 0.4.3 |
-| `of3ft` | OpenFold3 145k fine-tuned on the EV-A71 2A fragment screen by the OpenBind team [[1]](#ref-1) | Released checkpoint, trained on EV-A71 2A fragments only |
-| `of3ray` | OpenFold3 fine-tuned in this repository with Ray Train | Weights from `finetune_ray_train.py`; pass `--of3ray-legacy` for runs started from 145k |
+| `of3ft` | OpenFold3 145k fine-tuned on the EV-A71 2A fragment screen by the OpenBind team [1] | Released checkpoint, trained on EV-A71 2A fragments only |
+| `of3ray` | OpenFold3 fine-tuned in this template with Ray Train | Weights from `finetune_ray_train.py`; pass `--of3ray-legacy` for runs started from 145k |
 
 ### Campaign stages
 
@@ -164,12 +236,14 @@ Each binding event belongs to the fragment screen or to the early or late follow
 
 | Stage | SARS-CoV-2 Mpro | MERS-CoV Mpro |
 |---|---|---|
-| Fragment | COVID Moonshot XChem fragment screen [[12]](#ref-12), up to 16 heavy atoms | None |
+| Fragment | COVID Moonshot XChem fragment screen [12], up to 16 heavy atoms | None |
 | Early follow-on | ASAP compounds in the Polaris training set | Same |
 | Late follow-on | ASAP compounds in the Polaris test set, made later | Same |
 
 - Compounds without potency data are staged by crystal order.
 - Binding events more than 8 Å from the catalytic cysteine are left out of the curated benchmark.
+- The curated set keeps binding events with a PoseBusters-valid crystal reference and excludes suspected
+  crystallographic artefacts.
 
 ### Metrics
 
@@ -177,8 +251,8 @@ Each binding event belongs to the fragment screen or to the early or late follow
 |---|---|
 | Ligand RMSD | Distance between predicted and crystal ligand atoms after superposing the protein on its Cα atoms |
 | Success rate | Share of binding events with ligand RMSD below 2 Å |
-| Published | The OpenBind authors' value for the same method on the same complexes [[1]](#ref-1) |
-| Similarity | Highest Morgan-fingerprint similarity [[10]](#ref-10) to any fragment-screen ligand |
+| Published | The OpenBind authors' value for the same method on the same complexes [1] |
+| Similarity | Highest Morgan-fingerprint similarity [10] to any fragment-screen ligand |
 | pKD, pIC50 | Measured affinity on a log scale. Higher means tighter binding: 6 = 1 µM, 9 = 1 nM |
 | Spearman ρ | Rank correlation between predicted and measured affinity. 1 is a perfect ranking, 0 is no relationship |
 
@@ -197,12 +271,12 @@ All values use the curated set and 1 sampled pose per ligand.
 | OpenFold3 145k, fine-tuned with Ray Train (ours) | 75.7%* | 44.8% | 62.1% | 68.8% |
 
 <sub>Late follow-on compounds: the last design cycles of each campaign, and the hardest stage for every model.
-Early follow-ons and the combined figure are in the [pose accuracy figure](#results) and in
+Early follow-ons and the combined figure are in the pose accuracy figure below and in
 `scripts/compare_targets.py`. *Measured on the model's own training data. All other values are on compounds
 the model has not seen. †From the consortium that produced the EV-A71 2A data; likely trained on related
 structures.</sub>
 
-<img src="docs/images/pose_accuracy.png" alt="Pose accuracy by target and campaign stage" width="860">
+<img src="https://raw.githubusercontent.com/anyscale/templates/main/templates/cofolding-finetune-serve/docs/images/pose_accuracy.png" alt="Pose accuracy by target and campaign stage" width="860">
 
 How to read the figure:
 
@@ -212,7 +286,7 @@ How to read the figure:
 - **Grey is OpenFold3 145k**, the general model Step 6 fine-tunes. Red is the same model after the
   OpenBind team fine-tuned it on EV-A71 2A fragments: the 2 lines are the before and after of 1 experiment.
 - The fine-tuned model is shown on EV-A71 2A only, the target it was trained for. Its accuracy on a protease
-  it never saw is a different question, in [Fine-tuning from a general model](#fine-tuning-from-a-general-model).
+  it never saw is a different question, in the next section.
 
 ### Fine-tuning from a general model
 
@@ -227,7 +301,7 @@ on every follow-on compound, none of which appears in training.
 | Fine-tuned with Ray Train, 80 fragments, 32 samples per step | 65.2% | 71.0% | 40.6% |
 | Fine-tuned by the OpenBind team (released) | 56.5% | 66.4% | 78.1% |
 
-![Before and after fine-tuning](docs/images/before_after_accuracy.gif)
+![Before and after fine-tuning](https://raw.githubusercontent.com/anyscale/templates/main/templates/cofolding-finetune-serve/docs/images/before_after_accuracy.gif)
 
 **Observations**
 
@@ -267,9 +341,9 @@ changes:
 | **Any GPU, any zone** | The same script ran on L4 and L40S, across availability zones, on spot and on-demand capacity |
 | **Older software stacks** | 145k loads only in OpenFold3 0.4.3; Ray runs the workers in that environment with `runtime_env={"py_executable": ...}` |
 
-<img src="docs/images/train_recovery.png" alt="8 GPU workers losing a node and resuming from the last checkpoint" width="860">
+<img src="https://raw.githubusercontent.com/anyscale/templates/main/templates/cofolding-finetune-serve/docs/images/train_recovery.png" alt="8 GPU workers losing a node and resuming from the last checkpoint" width="860">
 
-![Restart from 0 vs resume from a checkpoint](docs/images/fault_tolerance.gif)
+![Restart from 0 vs resume from a checkpoint](https://raw.githubusercontent.com/anyscale/templates/main/templates/cofolding-finetune-serve/docs/images/fault_tolerance.gif)
 
 ### Affinity
 
@@ -282,14 +356,14 @@ changes:
 On SARS-CoV-2 Mpro, the predictions form a weaker and a stronger cluster, and part of the high
 correlation comes from separating the two. Within each cluster, ρ is 0.65 and 0.38.
 
-<img src="docs/images/affinity.png" alt="Predicted against measured affinity" width="820">
+<img src="https://raw.githubusercontent.com/anyscale/templates/main/templates/cofolding-finetune-serve/docs/images/affinity.png" alt="Predicted against measured affinity" width="820">
 
 ### Case study: 1 chemical series
 
 The animation follows 1 EV-A71 2A series from a fragment to a potent follow-on, with each model's
 prediction at every step.
 
-![1 chemical series from the EV-A71 2A campaign, and how each model follows it](docs/images/campaign.gif)
+![1 chemical series from the EV-A71 2A campaign, and how each model follows it](https://raw.githubusercontent.com/anyscale/templates/main/templates/cofolding-finetune-serve/docs/images/campaign.gif)
 
 ### Reproducibility
 
@@ -313,24 +387,23 @@ The results are also available as a web application built with Ray Serve. Chemis
 crystal complex, compare each model's prediction with the experimental structure in 3D, and submit new
 molecules for a live Boltz-2 prediction.
 
-![The viewer: leaderboard, live Boltz-2 prediction and 3D comparison of predicted and crystal poses](docs/images/viewer.png)
+![The viewer: leaderboard, live Boltz-2 prediction and 3D comparison of predicted and crystal poses](https://raw.githubusercontent.com/anyscale/templates/main/templates/cofolding-finetune-serve/docs/images/viewer.png)
 
 <sub>OpenBind-0's prediction for x7259a (green) overlaps the crystal pose (orange). The live prediction
 on the left includes a plain-language reading of the result.</sub>
 
 - **Leaderboard.** Every crystal complex, sorted by ligand RMSD, with a tab for each model.
 - **3D comparison.** Selecting a row shows the predicted ligand (green) on the crystal ligand (orange).
-- **Live prediction.** Paste a SMILES string to get a predicted pose from OpenFold3 (the base model or
-  a fine-tuned specialist, chosen by the current demo step) and an affinity from Boltz-2, each on its
-  own L4 GPU, with an explanation of what the numbers mean. A new molecule takes 1 to 2 minutes;
-  repeated molecules return from a cache in under a second.
+- **Live prediction.** Paste a SMILES string to get a predicted pose, confidence and affinity from
+  Boltz-2 on an L4 GPU, with an explanation of what the numbers mean. A new molecule takes 1 to 3
+  minutes; repeated molecules return instantly from a cache.
 - **Built-in guide.** A "How to read this page" panel explains RMSD, pKD, campaign stages and the live
   prediction metrics.
-- **Scales with demand.** The CPU front end scales from 2 to 4 replicas as traffic grows; each GPU model
-  runs on its own L4 node.
+- **Scales with demand.** The Boltz-2 deployment adds GPU replicas as traffic grows, from 1 to 4.
+- **Safe model updates.** Ray Serve holds several checkpoints on the same replicas and picks one per
+  request, so a new model reaches users behind a canary rather than a redeploy. Notebook 03 walks through it.
 
-See [Step 5](#step-5-viewer-and-live-prediction) to run it in a Workspace or share it as an Anyscale
-Service.
+Step 5 below runs it in a Workspace or shares it as an Anyscale Service.
 
 ---
 
@@ -339,13 +412,13 @@ Service.
 Each model runs as its own Ray Data pipeline, and all pipelines share 1 autoscaling cluster. The scored
 results feed the Ray Serve application described above.
 
-![Cluster architecture](docs/images/architecture.png)
+![Cluster architecture](https://raw.githubusercontent.com/anyscale/templates/main/templates/cofolding-finetune-serve/docs/images/architecture.png)
 
-| Ray library | Role in this repository |
+| Ray library | Role in this template |
 |---|---|
 | Ray Data | Streaming pipeline: SMILES validation on CPU, model inference on GPU actors, pose scoring on CPU |
 | Ray Train | Distributed fine-tuning of OpenFold3, using its own PyTorch Lightning training loop unchanged |
-| Ray Tune [[15]](#ref-15) | Learning-rate search with ASHA early stopping [[14]](#ref-14), and a search over Boltz-2 inference settings |
+| Ray Tune [15] | Learning-rate search with ASHA early stopping [14], and a search over Boltz-2 inference settings |
 | Ray Serve | Results viewer and live Boltz-2 prediction, with GPU replicas that scale independently |
 
 ### Design choices
@@ -375,7 +448,7 @@ results feed the Ray Serve application described above.
 
 ### Throughput with shared GPUs
 
-1 L4 GPU, EV-A71 2A, 8 ligands per batch, from the sweep in `scripts/pack_sweep.py`:
+1 L4 GPU, EV-A71 2A, 8 ligands per batch, from a packing sweep run while building this template:
 
 | Predictors per L4 | 8 vCPU per node | 16 vCPU per node |
 |---|---|---|
@@ -392,7 +465,7 @@ results feed the Ray Serve application described above.
 - With 64 GB per node and 2 predictors per GPU, OpenFold3 145k made 402 new predictions in 19 minutes on
   12 L4 GPUs at 80% GPU utilization.
 
-<img src="docs/images/throughput.png" alt="Throughput against predictors per GPU and vCPUs per node" width="820">
+<img src="https://raw.githubusercontent.com/anyscale/templates/main/templates/cofolding-finetune-serve/docs/images/throughput.png" alt="Throughput against predictors per GPU and vCPUs per node" width="820">
 
 ### GPU utilization by pipeline layout
 
@@ -404,7 +477,7 @@ MERS-CoV Mpro. The first 2 rows are earlier layouts on 8 L4 GPUs; the figure bel
 | Shared GPUs, models chained | 0% on the 4 Boltz-2 nodes, 43 to 92% on the others |
 | Shared GPUs, 1 pipeline per model (default) | 96% on average once all nodes were running |
 
-<img src="docs/images/gpu_cluster.png" alt="GPU utilization per node across a run" width="820">
+<img src="https://raw.githubusercontent.com/anyscale/templates/main/templates/cofolding-finetune-serve/docs/images/gpu_cluster.png" alt="GPU utilization per node across a run" width="820">
 
 ### Additional observations
 
@@ -415,73 +488,66 @@ MERS-CoV Mpro. The first 2 rows are earlier layouts on 8 L4 GPUs; the figure bel
 
 ---
 
-## Repository layout
+## Template layout
 
 ```
 .
+├── README.ipynb                        This page: setup, results and the full-scale runbook
 ├── 01_ray_and_offline_inference.ipynb  Ray Core, then offline batch inference with Ray Data
 ├── 02_train_and_tune.ipynb             Fine-tuning with Ray Train, sweeps with Ray Tune
 ├── 03_serve.ipynb                      The viewer and live prediction with Ray Serve
-├── workshop_helpers.py                 Plotting, 3D viewer and data loading for the notebooks
+├── notebook_helpers.py                 Plotting, 3D viewer and data loading for the notebooks
 │
 ├── aiddd_pipeline.py                   Ray Data benchmark pipeline: validate, predict, score
 ├── finetune_ray_train.py               Ray Train fine-tuning of OpenFold3 (TorchTrainer, Lightning DDP)
 ├── serve_viewer.py                     Ray Serve application: results viewer and live prediction
-├── of3_live.py                         OpenFold3 held in memory, for Ray Serve model multiplexing
 │
 ├── jobs/
 │   ├── job.yaml                        Everyday Anyscale Job: benchmarks, fine-tuning, sweeps
-│   ├── workshop.yaml                   The workshop's live run on pinned GPU nodes
-│   ├── service.yaml                    Anyscale Service for sharing the viewer
-│   └── demo_{1_base,2_ft,3_next_ft}.yaml  Live demo steps: add a model to the Service, in place
+│   ├── live_run.yaml                   Boltz-2 and OpenBind-0 side by side in a 20-minute slot
+│   └── service.yaml                    Anyscale Service for sharing the viewer
 ├── configs/
 │   └── finetune_ev71.yml               OpenFold3 training settings used by the fine-tune
 ├── scripts/
-│   ├── setup_data.py                   One-time download of data, published benchmark and weights
+│   ├── setup_data.py                   One-time download of data, scored results and (optionally) weights
 │   ├── prepare_mpro.py                 One-time build of the SARS-CoV-2 and MERS-CoV Mpro targets
 │   ├── prepare_finetune.py             Builds the OpenFold3 training set from a fragment screen
 │   ├── bench_checkpoints.py            Benchmarks every fine-tuned checkpoint on every target
 │   ├── compare_targets.py              Summary table across targets, models and campaign stages
-│   ├── pack_sweep.py                   Predictors per GPU and vCPUs per node: throughput sweep
 │   ├── tune_finetune.py                Ray Tune learning-rate search over complete Ray Train runs
-│   ├── tune_boltz.py                   Ray Tune search over Boltz-2 inference settings
-│   └── check_serve.py                  End-to-end check of the Serve application and multiplexing
-├── image/Containerfile                 Container image: Ray 2.59, Boltz-2, OpenFold3 0.5 and 0.4.3
+│   └── tune_boltz.py                   Ray Tune search over Boltz-2 inference settings
+├── tests/test_template.py              Checks the downloaded results against the published figures
+├── Dockerfile                          Container image: Ray 2.59, Boltz-2, OpenFold3 0.5 and 0.4.3
 └── docs/
     ├── images/                         Figures and animations used in this README and the notebooks
+    ├── data/                           Ray Tune sweep summaries shown in notebook 02
     └── figures/                        Scripts that redraw every figure from the benchmark results
 ```
 
 ---
 
-## Getting started
+## Running at full scale
 
-With an Anyscale Workspace set up as in [Step 1](#step-1-workspace-and-image), 4 commands reproduce
-the study:
+The notebooks show the workflow on a few ligands. The commands below reproduce the whole study. Run them
+from a terminal in the Workspace:
 
 ```bash
-python scripts/setup_data.py                            # 15 to 20 min, once
+python scripts/setup_data.py --with-weights             # 15 to 20 min, once
 python aiddd_pipeline.py --limit 8 --max-gpus 2 \
   --out /mnt/shared_storage/aiddd/results/smoke           # 15 min, checks that everything works
 anyscale job submit -f jobs/job.yaml --name aiddd-ev71 -- \
-  python aiddd_pipeline.py --target ev71-2a --models boltz2,openbind0 --max-gpus 8 \
+  python aiddd_pipeline.py --target ev71-2a --models boltz2,openbind0,of3ft --max-gpus 8 \
     --out /mnt/shared_storage/aiddd/results/ev71-2a       # 1 to 2 h, full benchmark
 serve run serve_viewer:app                              # viewer and live prediction
 ```
 
-To follow the workshop instead, open `01_ray_and_offline_inference.ipynb` in the Workspace and run the
-cells in order, then `02_train_and_tune.ipynb` and `03_serve.ipynb`.
+Writing to `results/ev71-2a` replaces the scored results that `setup_data.py` downloaded, which the
+notebooks read. Use a different `--out` folder for experiments.
 
-Both notebook settings live in the Setup cell of each notebook:
+### Suggested 90-minute session
 
-| Setting | Default | Meaning |
-|---|---|---|
-| `USE_GPUS` | `False` | `False` loads stored results for every GPU step. `True` runs them live and starts GPU nodes |
-| `AIDDD_SERVICE_URL` | unset | Environment variable holding the address of the shared Anyscale Service (`aiddd-viewer`) for notebook 03. With `USE_GPUS = False`, section 6 sends its predictions there and 6.7 runs the room exercise; unset, those cells print how to set it and skip. With `USE_GPUS = True` (the presenter), section 6 runs its own Ray Serve pool in the Workspace |
-
-### Workshop format
-
-Complete Steps 2, 2b and 4 before the session. The 90-minute session then runs as follows:
+The template began as a 90-minute workshop. To run it with a group, complete Steps 2, 2b and 4 beforehand,
+then:
 
 | Minutes | Notebook | Activity |
 |---|---|---|
@@ -490,20 +556,7 @@ Complete Steps 2, 2b and 4 before the session. The 90-minute session then runs a
 | 25 to 45 | 01 | Full benchmark: comparison by campaign stage and across targets |
 | 45 to 60 | 01 | 3D viewer and pose overlays |
 | 60 to 80 | 02 | Fine-tuning OpenFold3 145k with Ray Train: a short live run, then the full run trained beforehand |
-| 80 to 90 | 03 | Ray Serve: the base model and its fine-tunes in one multiplexed pool, a new version added in place, and the whole room on one shared Service |
-
-The Workspace has a limited number of GPUs, so run the cells of each notebook in order. In notebook 03,
-attendees (`USE_GPUS = False`) use no Workspace GPU: their predictions go to the shared Service. Only the
-presenter (`USE_GPUS = True`) starts a Ray Serve pool in the Workspace, which holds a GPU until the final
-cell stops it.
-
-**Getting `AIDDD_SERVICE_URL`.** The presenter shares the Service address at the start of the session:
-`anyscale service status -n aiddd-viewer` prints it as `query_url` (today
-`https://aiddd-viewer-5ms2e.cld-g54aiirwj1s8t9kt.s.anyscaleuserdata.com`). Set it as a Workspace
-environment variable before starting the notebook, or paste it into the Setup cell in place of
-`os.environ.get("AIDDD_SERVICE_URL", "")`. The same address opens the viewer page in a browser.
-
----
+| 80 to 90 | 03 | Live prediction with Ray Serve for a molecule suggested by the audience |
 
 ## Runbook
 
@@ -511,7 +564,7 @@ Times refer to the cluster defined in `jobs/job.yaml`.
 
 | Step | Task | Time |
 |---|---|---|
-| 1 | Workspace and image | 5 min with a prebuilt image |
+| 1 | Workspace | Ready when the template opens |
 | 2 | Download data and weights | 15 to 20 min, once |
 | 2b | Build the Mpro targets | About 10 min, once |
 | 3 | Smoke test: 8 ligands, 3 models | 15 to 20 min, mostly node startup |
@@ -520,39 +573,30 @@ Times refer to the cluster defined in `jobs/job.yaml`.
 | 6 | Fine-tuning with Ray Train: 1,000 steps on 8 L4 GPUs | About 2.3 h |
 | 7 | Searches with Ray Tune | 35 to 60 min |
 
-### Step 1. Workspace and image
+### Step 1. Workspace
+
+The template's Workspace comes configured:
 
 | Setting | Value |
 |---|---|
-| Container image | `anyscale/image/aiddd-boltz2-of3:4` |
 | Head node | `m5.2xlarge`, CPU only, so the notebook never holds a GPU |
-| Worker group | `g6.xlarge` or `g6.2xlarge` (1 L4 GPU), minimum 0, maximum 4 |
-
-Clone this repository into the Workspace. To build the image yourself, run the command below, then set
-`image_uri` in `jobs/job.yaml` and `jobs/service.yaml` to the version it prints:
-
-```bash
-anyscale image build -f image/Containerfile -n aiddd-boltz2-of3 -r 2.59.0
-```
-
-> **Python version.** Boltz-2 requires a SciPy release that does not build on Python 3.13. The image also
-> contains a separate OpenFold3 0.4.3 install at `/opt/of3-legacy`, because the released fine-tuned
-> checkpoint only loads with that version.
+| Worker group | `g6.4xlarge` (1 L4 GPU, 16 vCPU, 64 GB), minimum 0, maximum 8, spot preferred |
 
 ### Step 2. Download data and weights
 
 ```bash
-anyscale job submit -f jobs/job.yaml --name aiddd-setup -- python scripts/setup_data.py
+anyscale job submit -f jobs/job.yaml --name aiddd-setup -- python scripts/setup_data.py --with-weights
 ```
 
-All data is stored under `/mnt/shared_storage/aiddd`, which every Workspace, Job and Service in the Anyscale cloud can read, whoever started it:
+All data is stored under `/mnt/shared_storage/aiddd` (or `$AIDDD_SHARED`), which Workspaces and Jobs can both read:
 
 ```
 /mnt/shared_storage/aiddd/
   raw/OpenBind_EV-A71_2A/      structures, metadata CSV, FASTA, MSA        (500 MB)
   EV-A71_2A_benchmark/         published OpenBind results                  (11 MB)
-  boltz_cache/                 Boltz-2 weights and chemical component data (6 GB)
-  of3_cache/                   OpenBind-0, OF3-p2 and fine-tuned OF3 ckpts (11 GB)
+  results*/                    scored results the notebooks read           (2 MB)
+  boltz_cache/                 Boltz-2 weights and chemical component data (6 GB, --with-weights)
+  of3_cache/                   OpenBind-0 and fine-tuned OF3 checkpoints   (9 GB, --with-weights)
 ```
 
 - The script skips anything already downloaded and is safe to rerun.
@@ -615,17 +659,22 @@ anyscale job submit -f jobs/job.yaml --name base-of3p2-ev71-2a -- \
 
 - Each job runs on its own cluster, so all 3 targets can run at the same time.
 - **Always pass `--out` for anything other than the main benchmark.** The pipeline deletes its output folder when
-  it starts, and the default is the folder the viewer reads.
+  it starts, and the default is the folder the viewer and the notebooks read.
 - Predictions are cached per ligand, so a resubmitted job only predicts what is missing.
 - While a job runs, the **Metrics** page of the Ray Dashboard shows GPU nodes joining and GPU use per
   node.
+
+For the headline run, Boltz-2 and OpenBind-0 side by side on pinned GPU nodes in about 20 minutes:
+
+```bash
+anyscale job submit -f jobs/live_run.yaml --name aiddd-live
+```
 
 ### Step 5. Viewer and live prediction
 
 **In a Workspace, for development:**
 
 ```bash
-python scripts/check_serve.py                                      # end-to-end check
 AIDDD_RESULTS=/mnt/shared_storage/aiddd/results/ev71-2a serve run serve_viewer:app
 ```
 
@@ -744,9 +793,10 @@ anyscale job submit -f jobs/job.yaml --name tune-boltz -- python scripts/tune_bo
 
 | Variable | Default | Used by |
 |---|---|---|
-| `AIDDD_SHARED` | `/mnt/shared_storage/aiddd` | All scripts: data, weights, predictions and results |
+| `AIDDD_SHARED` | `/mnt/shared_storage/aiddd` | All scripts and notebooks: data, weights, predictions and results |
 | `AIDDD_RESULTS` | `$AIDDD_SHARED/results/ev71-2a` | `serve_viewer.py` |
-| `AIDDD_OURS_RUN` | newest benchmarked `ft-p2-*` run | `workshop_helpers.py`: which fine-tune the notebook shows as "ours" |
+| `AIDDD_OURS_RUN` | newest benchmarked `ft-p2-*` run | `notebook_helpers.py`: which fine-tune the notebooks show as "ours" |
+| `AIDDD_SERVICE_URL` | unset | Notebook 03: a deployed prediction service to call instead of starting Ray Serve |
 
 ---
 
@@ -754,12 +804,12 @@ anyscale job submit -f jobs/job.yaml --name tune-boltz -- python scripts/tune_bo
 
 | Symptom | Cause and fix |
 |---|---|
-| `Missing /mnt/shared_storage/aiddd/...` | Data is not downloaded. Run Step 2 or Step 2b |
+| `Missing /mnt/shared_storage/aiddd/...` in a notebook's Setup cell | Data is not downloaded. Run the setup cell in Start here. With `USE_GPUS = True`, also download the weights (Step 2) and, for Mpro, Step 2b |
 | Job stays at `pending=1` actors for several minutes | GPU nodes are starting. The first node usually takes 3 to 6 minutes |
 | `InsufficientInstanceCapacity` | The cloud has no free GPUs of that type. `enable_cross_zone_scaling` tries other zones. If all fail, remove `--of3-accelerator L40S` so every stage uses L4 |
-| Fine-tuning reports that the worker group timed out | Not enough free GPUs. Stop the Serve application from Section 7 (`serve shutdown`) and run the notebook in order |
-| `Default checkpoint ... not found` from OpenFold3 | `of3_cache` is incomplete. Rerun `python scripts/setup_data.py` |
-| `of3ft` fails with missing or unexpected state-dictionary keys | The job is not using the project image, so `/opt/of3-legacy` is missing. Check `image_uri` |
+| Fine-tuning reports that the worker group timed out | Not enough free GPUs. Stop the Serve application from notebook 03 (`serve shutdown`) and run the notebooks in order |
+| `Default checkpoint ... not found` from OpenFold3 | `of3_cache` is incomplete. Rerun `python scripts/setup_data.py --with-weights` |
+| `of3ft` fails with missing or unexpected state-dictionary keys | The job is not using the template image, so `/opt/of3-legacy` is missing. Check `image_uri` |
 | CUDA out of memory in an OpenFold3 stage | Lower `--batch-size`, or add an L40S group and pass `--of3-accelerator L40S` |
 | Viewer shows `not scored yet` | `AIDDD_RESULTS` points to a run that does not include that model |
 | Live prediction never returns | No L4 GPU is available to the Workspace. Add an L4 worker group |
@@ -768,8 +818,8 @@ anyscale job submit -f jobs/job.yaml --name tune-boltz -- python scripts/tune_bo
 | `unexpected keyword argument 'fallback_conformer_source'` | A training set built with OpenFold3 0.5 read by 0.4.3. `--base p2` writes a compatible `training_cache_of3v04.json` |
 | Learning rate stuck at 9.5e-5 after step 200 in a 145k run | OpenFold3 0.4.3 drops `decay_every_n_steps`. Fixed in `finetune_ray_train.py`; rerun runs started before 2026-10-23 01:00 |
 | `Training was interrupted by node preemption` | A spot node was reclaimed. Ray Train restarts automatically; use `--checkpoint-every` so it resumes instead of starting over |
-| `results/ev71-2a` is empty and the viewer shows nothing | A pipeline run without `--out` deleted it. Restore from a backup and always pass `--out` |
-| `ModuleNotFoundError: scripts.prepare_finetune` under `/opt/of3-legacy` | The legacy install ships its own `scripts` package. Keep `scripts/__init__.py` in the repository |
+| `results/ev71-2a` is empty and the viewer shows nothing | A pipeline run without `--out` deleted it. Rerun `python scripts/setup_data.py` after removing the empty folder, and always pass `--out` |
+| `ModuleNotFoundError: scripts.prepare_finetune` under `/opt/of3-legacy` | The legacy install ships its own `scripts` package. Keep `scripts/__init__.py` in the template |
 | 3D view in the notebook shows only a static picture | The browser does not run scripts in notebook output. Run the cell again, or use the Serve viewer for an interactive view |
 
 ---
@@ -785,47 +835,47 @@ anyscale job submit -f jobs/job.yaml --name tune-boltz -- python scripts/tune_bo
 | Mpro crystal structures (ASAP Discovery, COVID Moonshot) | [Fragalysis, target CoV-Mpro](https://fragalysis.diamond.ac.uk/) | CC-BY 4.0 |
 | Mpro potency (pIC50) | [ASAP x Polaris x OpenADMET challenge](https://huggingface.co/datasets/openadmet/ASAP_Polaris_OpenADMET_challenge) | MIT |
 | MSAs for the Mpro targets | [ColabFold MSA server](https://colabfold.mmseqs.com) | |
-| Ray diagrams in the notebook | [Ray documentation](https://docs.ray.io) | Apache 2.0 |
+| Ray diagrams in the notebooks | [Ray documentation](https://docs.ray.io) | Apache 2.0 |
 
 ---
 
 ## References
 
-1. <a id="ref-1"></a>OpenBind Consortium. OpenBind's first release: a structure–affinity dataset for structure-based AI.
+1. OpenBind Consortium. OpenBind's first release: a structure–affinity dataset for structure-based AI.
    *bioRxiv* (2026). [doi:10.64898/2026.08.27.747600](https://doi.org/10.64898/2026.08.27.747600)
-2. <a id="ref-2"></a>Passaro, S., Corso, G., Wohlwend, J., *et al.* Boltz-2: Towards accurate and efficient binding
+2. Passaro, S., Corso, G., Wohlwend, J., *et al.* Boltz-2: Towards accurate and efficient binding
    affinity prediction. *bioRxiv* (2025). [doi:10.1101/2025.06.14.659707](https://doi.org/10.1101/2025.06.14.659707)
-3. <a id="ref-3"></a>The OpenFold3 Team. OpenFold3-preview (software, version 0.5.0). *Zenodo* (2026).
+3. The OpenFold3 Team. OpenFold3-preview (software, version 0.5.0). *Zenodo* (2026).
    [doi:10.5281/zenodo.17485509](https://doi.org/10.5281/zenodo.17485509)
-4. <a id="ref-4"></a>Abramson, J., Adler, J., Dunger, J., *et al.* Accurate structure prediction of biomolecular
+4. Abramson, J., Adler, J., Dunger, J., *et al.* Accurate structure prediction of biomolecular
    interactions with AlphaFold 3. *Nature* **630**, 493–500 (2024).
    [doi:10.1038/s41586-024-07487-w](https://doi.org/10.1038/s41586-024-07487-w)
-5. <a id="ref-5"></a>Weininger, D. SMILES, a chemical language and information system. 1. Introduction to methodology
+5. Weininger, D. SMILES, a chemical language and information system. 1. Introduction to methodology
    and encoding rules. *J. Chem. Inf. Comput. Sci.* **28**, 31–36 (1988).
    [doi:10.1021/ci00057a005](https://doi.org/10.1021/ci00057a005)
-6. <a id="ref-6"></a>Berman, H. M., Westbrook, J., Feng, Z., *et al.* The Protein Data Bank. *Nucleic Acids Res.*
+6. Berman, H. M., Westbrook, J., Feng, Z., *et al.* The Protein Data Bank. *Nucleic Acids Res.*
    **28**, 235–242 (2000). [doi:10.1093/nar/28.1.235](https://doi.org/10.1093/nar/28.1.235)
-7. <a id="ref-7"></a>Škrinjar, P., Eberhardt, J., Durairaj, J., Schwede, T. Have protein-ligand co-folding methods
+7. Škrinjar, P., Eberhardt, J., Durairaj, J., Schwede, T. Have protein-ligand co-folding methods
    moved beyond memorisation? *bioRxiv* (2025).
    [doi:10.1101/2025.02.03.636309](https://doi.org/10.1101/2025.02.03.636309)
-8. <a id="ref-8"></a>Mirdita, M., Schütze, K., Moriwaki, Y., *et al.* ColabFold: making protein folding accessible to
+8. Mirdita, M., Schütze, K., Moriwaki, Y., *et al.* ColabFold: making protein folding accessible to
    all. *Nat. Methods* **19**, 679–682 (2022). [doi:10.1038/s41592-022-01488-1](https://doi.org/10.1038/s41592-022-01488-1)
-9. <a id="ref-9"></a>Buttenschoen, M., Morris, G. M., Deane, C. M. PoseBusters: AI-based docking methods fail to
+9. Buttenschoen, M., Morris, G. M., Deane, C. M. PoseBusters: AI-based docking methods fail to
    generate physically valid poses or generalise to novel sequences. *Chem. Sci.* **15**, 3130–3139 (2024).
    [doi:10.1039/D3SC04185A](https://doi.org/10.1039/D3SC04185A)
-10. <a id="ref-10"></a>Rogers, D., Hahn, M. Extended-connectivity fingerprints. *J. Chem. Inf. Model.* **50**, 742–754
+10. Rogers, D., Hahn, M. Extended-connectivity fingerprints. *J. Chem. Inf. Model.* **50**, 742–754
     (2010). [doi:10.1021/ci100001p](https://doi.org/10.1021/ci100001p)
-11. <a id="ref-11"></a>Mariani, V., Biasini, M., Barbato, A., Schwede, T. lDDT: a local superposition-free score for
+11. Mariani, V., Biasini, M., Barbato, A., Schwede, T. lDDT: a local superposition-free score for
     comparing protein structures and models using distance difference tests. *Bioinformatics* **29**, 2722–2728
     (2013). [doi:10.1093/bioinformatics/btt473](https://doi.org/10.1093/bioinformatics/btt473)
-12. <a id="ref-12"></a>Boby, M. L., Fearon, D., Ferla, M., *et al.* Open science discovery of potent noncovalent
+12. Boby, M. L., Fearon, D., Ferla, M., *et al.* Open science discovery of potent noncovalent
     SARS-CoV-2 main protease inhibitors. *Science* **382**, eabo7201 (2023).
     [doi:10.1126/science.abo7201](https://doi.org/10.1126/science.abo7201)
-13. <a id="ref-13"></a>Moritz, P., Nishihara, R., Wang, S., *et al.* Ray: a distributed framework for emerging AI
+13. Moritz, P., Nishihara, R., Wang, S., *et al.* Ray: a distributed framework for emerging AI
     applications. In *Proc. 13th USENIX Symposium on Operating Systems Design and Implementation (OSDI)*,
     561–577 (2018). [arXiv:1712.05889](https://arxiv.org/abs/1712.05889)
-14. <a id="ref-14"></a>Li, L., Jamieson, K., Rostamizadeh, A., *et al.* A system for massively parallel
+14. Li, L., Jamieson, K., Rostamizadeh, A., *et al.* A system for massively parallel
     hyperparameter tuning. In *Proc. Machine Learning and Systems (MLSys)* **2** (2020).
     [arXiv:1810.05934](https://arxiv.org/abs/1810.05934)
-15. <a id="ref-15"></a>Liaw, R., Liang, E., Nishihara, R., *et al.* Tune: a research platform for distributed model
+15. Liaw, R., Liang, E., Nishihara, R., *et al.* Tune: a research platform for distributed model
     selection and training. *arXiv* (2018). [arXiv:1807.05118](https://arxiv.org/abs/1807.05118)
